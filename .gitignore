@@ -1,0 +1,30 @@
+# 行情缓存（parquet + 元数据）—— 体积大且可重新拉取，不进仓库
+.cache/
+*.parquet
+
+# 绝不能提交的东西
+.env
+.env.*
+*.key
+*.pem
+credentials*
+secrets*
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 输出
+reports/
+*.log
