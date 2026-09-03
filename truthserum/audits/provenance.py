@@ -102,9 +102,12 @@ class ProvenanceAudit(Audit):
     def _self_check(self, ctx) -> str:
         pairs = self._pairs(ctx)
         if not pairs:
-            raise SelfCheckFailed(
-                f"没有找到任何 MCP 参照样本（{self.cache_dir}/mcp_ref_*.json）—— "
-                f"无参照就无从核验")
+            # ⚠ 没有参照【不等于】检测器坏了。
+            #   这里原本 raise SelfCheckFailed，于是整道闸门判成「不可判定」——
+            #   把「没东西可查」说成了「检测器瞎了」，两者含义完全不同。
+            #   合成数据跑 examples/smoke.py 时必然没有参照，那不是故障。
+            #   没有参照时 _run 会返回 SKIPPED（未检），那才是诚实的判读。
+            return "没有参照样本，本闸门未执行（自检不适用）"
         sym, bars, ref = pairs[0]
         # 人为把参照的一个收盘价改掉 0.01% —— 小到肉眼难辨，检测器必须抓到
         tampered = ref.copy()
@@ -125,25 +128,67 @@ class ProvenanceAudit(Audit):
                 headline="没有 MCP 参照样本，跳过核验",
                 detail=["先用 Binance MCP Server 抓一段 K 线存为参照："
                         f"{self.cache_dir}/mcp_ref_<SYMBOL>_{self.interval}.json"])
-        det, total, bad_total, worst_all, ex = [], 0, 0, 0.0, ""
+        n_syms = len(ctx.bars)
+        n_bars_all = sum(len(df) for df in ctx.bars.values())
+        det, done, total, bad_total, worst_all, ex = [], [], 0, 0, 0.0, ""
         for sym, bars, ref in pairs:
             n, bad, worst, example = _compare(bars, ref)
-            total += n; bad_total += bad
+            if n == 0:
+                # ⚠ 没有重叠时段 ≠ 核验通过。
+                #   原先这里 n=0、bad=0 会一路走到 CLEAN，报出「0 根全对」——
+                #   一道专抓「数字骗人」的闸门，自己报了个骗人的数字。
+                det.append(f"{sym}：参照与缓存没有重叠的时间段 —— 无法核验")
+                continue
+            done.append(sym)
+            total += n
+            bad_total += bad
             if worst > worst_all:
                 worst_all, ex = worst, example
             det.append(f"{sym}：比对 {n} 根，不一致 {bad} 根"
                        + (f"，最大偏差 {worst*100:.4f}%" if bad else ""))
+
+        nums = {"symbols_checked": len(done), "symbols_total": n_syms,
+                "bars_compared": total, "bars_total": n_bars_all,
+                "mismatched": bad_total}
+
         if bad_total:
             return AuditResult(
                 name=self.name, verdict=Verdict.FAILED,
                 headline=f"缓存行情与币安官方数据不一致：{bad_total}/{total} 根对不上",
                 detail=det + [f"示例：{ex}",
                               "回测再严谨，喂进去的 K 线错了，结论就是错的。"],
-                numbers={"compared": total, "mismatched": bad_total,
-                         "worst_rel": worst_all})
+                numbers=nums | {"worst_rel": worst_all})
+
+        if not done:
+            return AuditResult(
+                name=self.name, verdict=Verdict.SKIPPED,
+                headline="有参照样本，但与缓存没有任何重叠时段 —— 一根都没核验",
+                detail=det + ["参照要落在缓存的时间区间【内部】才比得了。"],
+                numbers=nums)
+
+        # 覆盖不全就不许说「未见异常」。
+        # 只核验了 4 个标的里的 1 个却显示 ✅，等于用一个标的的清白替另外三个背书。
+        if len(done) < n_syms:
+            miss = [s for s in ctx.bars if s not in done]
+            return AuditResult(
+                name=self.name, verdict=Verdict.SKIPPED,
+                headline=(f"只核验了 {len(done)}/{n_syms} 个标的（{'、'.join(done)}），"
+                          f"不足以判定"),
+                detail=det + [f"缺参照：{'、'.join(miss)}",
+                              "已核验的部分逐根一致，但覆盖不全 —— "
+                              "不能用一个标的的清白替其余标的背书。",
+                              "补参照：用 Binance MCP 取一段 K 线，"
+                              "交给 save_mcp_reference 存下。"],
+                numbers=nums)
+
+        pct = total / n_bars_all * 100 if n_bars_all else 0.0
         return AuditResult(
             name=self.name, verdict=Verdict.CLEAN,
-            headline=f"行情与币安官方 MCP 逐根一致（{total} 根全对）",
-            detail=det + ["参照来自 Binance MCP Server（官方通道、OAuth 授权、"
+            headline=(f"行情与币安官方 MCP 逐根一致："
+                      f"{len(done)}/{n_syms} 个标的、共 {total} 根全对"),
+            detail=det + [f"这是抽样核验：{total} 根 / 全量 {n_bars_all} 根"
+                          f"（{pct:.2f}%）。抽样一致不等于全量一致，"
+                          f"要更强的保证就补更多参照。",
+                          "参照来自 Binance MCP Server（官方通道、OAuth 授权、"
                           "不落地 API key）"],
-            numbers={"compared": total, "mismatched": 0})
+            numbers=nums)

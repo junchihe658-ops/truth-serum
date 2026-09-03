@@ -1,0 +1,17 @@
+# Truth Serum 依赖
+#
+# 版本下限按【本机实测跑通的版本】往下放一档，不写死上限 —— 评审的环境
+# 未必和我一样。实测环境：Python 3.11.5 / pandas 3.0.3 / numpy 2.4.4 /
+# requests 2.34.1 / pyarrow 24.0.0 / mcp 1.27.1。
+
+pandas>=2.0
+numpy>=1.24
+requests>=2.28
+
+# parquet 缓存的引擎。pandas 的 to_parquet/read_parquet 需要它，
+# 缺了会在第一次落缓存时才报错 —— 那时候行情已经拉完了，很浪费。
+pyarrow>=12.0
+
+# MCP server（python -m truthserum.server）用。
+# 只跑 examples/ 里的脚本不需要它，装上不影响。
+mcp>=1.0
