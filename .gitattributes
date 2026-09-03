@@ -1,0 +1,10 @@
+# 仓库统一用 LF。
+#
+# 起因：Windows 上 pathlib.write_text() 会把整个文件的行尾转成 CRLF，
+# 于是 HACKATHON.md 一次 20 行的内容修改产生了 188 行的 diff（90 删 98 增），
+# 真正的改动被行尾噪音淹没。加这条护栏，让 git 在入库时统一归一化。
+* text=auto eol=lf
+
+*.parquet binary
+*.png      binary
+*.jpg      binary
