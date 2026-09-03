@@ -74,7 +74,43 @@ ck("① 号闸门抓到前瞻", "发现前瞻" in r2, r2[:200])
 
 print()
 print("=" * 74)
-print("【2】走真实 MCP 协议：它能不能被别的客户端装上")
+print("【2】自然语言入口")
+print("=" * 74)
+
+v = S.strategy_vocabulary()
+ck("词汇表列出了指标与比较词", "RSI" in v and "上穿" in v and "跌破" in v)
+ck("词汇表说明了超出范围怎么办", "audit_strategy" in v)
+
+# 词汇表外 → 必须拒绝，而且要把词汇表一起给出来
+r = S.audit_plain_language("MACD 金叉就满仓梭哈", ["ETHUSDT"])
+ck("词汇表外的说法被拒绝", "没法可靠地翻译" in r and "MACD" in r, r[:70])
+ck("拒绝时附上了词汇表", "词汇表" in r)
+ck("拒绝时【没有】跑审计", "策略体检报告" not in r)
+
+# dry_run：只回读解读和代码
+r = S.audit_plain_language("RSI 超过 70 做空、低于 30 做多、持 12 小时",
+                           ["ETHUSDT"], dry_run=True)
+ck("dry_run 回读了解读", "我理解成这样" in r and "RSI(14) > 70" in r)
+ck("dry_run 印出了生成的代码", "def signal(bars):" in r)
+ck("dry_run 没有跑审计", "策略体检报告" not in r)
+ck("省略主语的第二条被回读出来", "省略了主语" in r, )
+
+# 有歧义时，未确认不许开跑 —— 这是这一层最重要的安全阀
+r = S.audit_plain_language("EMA12 上穿 EMA48 做多", ["ETHUSDT"])
+ck("有歧义且未确认时不跑审计", "策略体检报告" not in r and "confirmed=True" in r)
+ck("并说明了歧义在哪", "穿越那一根" in r)
+
+print("\n  自然语言 → 五道闸门，跑一次真的（ETHUSDT，可能要 1~2 分钟）…")
+r = S.audit_plain_language("RSI 超过 70 做空、低于 30 做多、持 12 小时",
+                           ["ETHUSDT"], claimed="回测年化 +180%",
+                           confirmed=True)
+ck("确认后跑出完整报告", "策略体检报告" in r and "④" in r, r[:60])
+ck("报告里仍然带着解读回读", "我理解成这样" in r)
+ck("印了策略自称的成绩", "+180%" in r)
+
+print()
+print("=" * 74)
+print("【3】走真实 MCP 协议：它能不能被别的客户端装上")
 print("=" * 74)
 
 
@@ -95,7 +131,8 @@ try:
     names = asyncio.run(asyncio.wait_for(handshake(), timeout=90))
     print(f"  服务器暴露的工具: {names}")
     for t in ("list_gates", "fetch_market_data", "audit_strategy",
-              "save_mcp_reference"):
+              "save_mcp_reference", "strategy_vocabulary",
+              "audit_plain_language"):
         ck(f"暴露了 {t}", t in names)
 except Exception as e:
     ck("MCP 协议握手", False, f"{type(e).__name__}: {e}")

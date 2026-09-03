@@ -35,37 +35,16 @@ from mcp.server.fastmcp import FastMCP
 
 from .core import Costs, FuncStrategy
 from .data import describe, load
+from .indicators import TOOLBOX, TOOLBOX_DOC
+from .nl import VOCAB_DOC, CannotParse
+from .nl import parse as parse_nl
 from .runner import AUDITS, check
 
 mcp = FastMCP("truth-serum")
 
-# ── 给策略代码用的工具箱 ──────────────────────────────────────
-def rsi(c: pd.Series, n: int = 14) -> pd.Series:
-    d = c.diff()
-    up = d.clip(lower=0).ewm(alpha=1 / n, adjust=False).mean()
-    dn = (-d.clip(upper=0)).ewm(alpha=1 / n, adjust=False).mean()
-    return 100 - 100 / (1 + up / (dn + 1e-12))
-
-
-def ema(c: pd.Series, n: int) -> pd.Series:
-    return c.ewm(span=n, adjust=False).mean()
-
-
-def atr(bars: pd.DataFrame, n: int = 14) -> pd.Series:
-    pc = bars["close"].shift(1)
-    tr = pd.concat([bars["high"] - bars["low"],
-                    (bars["high"] - pc).abs(),
-                    (bars["low"] - pc).abs()], axis=1).max(axis=1)
-    return tr.ewm(alpha=1 / n, adjust=False).mean()
-
-
-def bb_pct(c: pd.Series, n: int = 20, k: float = 2.0) -> pd.Series:
-    m, s = c.rolling(n).mean(), c.rolling(n).std()
-    return (c - (m - k * s)) / ((m + k * s) - (m - k * s) + 1e-12)
-
-
-_SANDBOX = {"pd": pd, "np": np, "pandas": pd, "numpy": np,
-            "rsi": rsi, "ema": ema, "atr": atr, "bb_pct": bb_pct}
+#: 策略代码的工具箱住在 indicators.py —— 自然语言层和它的测试也要用，
+#: 从这里拿会连带 import mcp（整个 MCP 框架）。单一出处，别再复制一份。
+_SANDBOX = dict(TOOLBOX)
 
 GATES_DOC = """Truth Serum 的五道闸门（从「最底层的前提」往上查）
 
@@ -123,6 +102,53 @@ def fetch_market_data(symbols: list[str], interval: str = "1h",
         return f"拉取失败：{type(e).__name__}: {e}"
 
 
+def _load_probe_check(fn, symbols, interval, claimed,
+                      barrier_mult, horizon, fee_per_side,
+                      name: str = "待审策略") -> str:
+    """加载行情 → 试调 → 跑五道闸门。两条审计入口共用这一份。
+
+    抽出来是因为两条入口（手写代码 / 自然语言）必须走【完全相同】的流程。
+    要是哪天只改了一边，两条路会对同一个策略给出不同结论 ——
+    那是最难查的那种 bug，而且恰好是这个项目最不该犯的错。
+    """
+    try:
+        bars, prov = load(symbols, interval)
+    except Exception as e:
+        return (f"拿不到行情：{type(e).__name__}: {e}\n"
+                f"先调用 fetch_market_data 把数据拉到缓存。")
+
+    # ⚠ 先用几十根 K 线试调一次再进审计。
+    #   策略代码可能【编译得过但一调用就炸】（比如笔误成了未定义的名字），
+    #   不先试调的话，这类错误会深埋在某道闸门里冒出来，报错难读。
+    probe_sym = next(iter(bars))
+    try:
+        out = fn(bars[probe_sym].head(200))
+        n = len(out) if hasattr(out, "__len__") else -1
+        if n != 200:
+            return (f"策略返回的长度不对：喂了 200 根 K 线，返回 {n} 个值。\n"
+                    f"`signal(bars)` 必须返回与 bars 【等长】的序列。")
+    except Exception:
+        return (f"策略代码能编译，但调用时出错：\n"
+                f"{traceback.format_exc(limit=3)}\n"
+                f"可用的名字：{TOOLBOX_DOC}")
+
+    buf = io.StringIO()
+    try:
+        with redirect_stdout(buf):          # 别让策略里的 print 污染 MCP 协议
+            rep = check(bars, FuncStrategy(name, fn),
+                        name=name, claimed=claimed,
+                        costs=Costs(fee_per_side=fee_per_side),
+                        barrier_mult=barrier_mult, horizon=horizon)
+    except Exception:
+        return f"审计过程出错：\n{traceback.format_exc(limit=5)}"
+
+    out = [describe(prov), "", rep.render()]
+    noise = buf.getvalue().strip()
+    if noise:
+        out += ["", "（策略代码的输出）", noise[:2000]]
+    return "\n".join(out)
+
+
 @mcp.tool()
 def audit_strategy(signal_code: str, symbols: list[str],
                    interval: str = "1h", claimed: str = "",
@@ -137,7 +163,7 @@ def audit_strategy(signal_code: str, symbols: list[str],
         一段 Python，必须定义 `def signal(bars):`，返回与 bars 等长的
         +1(做多) / −1(做空) / 0(观望) 序列。
         bars 是 DataFrame，index 为时间，列有 open/high/low/close/volume。
-        预置可用：pd, np, rsi(c,n), ema(c,n), atr(bars,n), bb_pct(c,n,k)
+        预置可用：pd, np, rsi(c,n), ema(c,n), sma(c,n), atr(bars,n), bb_pct(c,n,k)
 
         ⚠ 合约：第 i 行的信号只能用第 i 行【及之前】的数据。
           违反了也没关系 —— ① 号闸门会抓到。
@@ -163,42 +189,8 @@ def audit_strategy(signal_code: str, symbols: list[str],
     if not callable(fn):
         return "策略代码里没有找到 `def signal(bars):`"
 
-    try:
-        bars, prov = load(symbols, interval)
-    except Exception as e:
-        return (f"拿不到行情：{type(e).__name__}: {e}\n"
-                f"先调用 fetch_market_data 把数据拉到缓存。")
-
-    # ⚠ 先用几十根 K 线试调一次再进审计。
-    #   策略代码可能【编译得过但一调用就炸】（比如笔误成了未定义的名字），
-    #   不先试调的话，这类错误会深埋在某道闸门里冒出来，报错难读。
-    probe_sym = next(iter(bars))
-    try:
-        out = fn(bars[probe_sym].head(200))
-        n = len(out) if hasattr(out, "__len__") else -1
-        if n != 200:
-            return (f"策略返回的长度不对：喂了 200 根 K 线，返回 {n} 个值。\n"
-                    f"`signal(bars)` 必须返回与 bars 【等长】的序列。")
-    except Exception:
-        return (f"策略代码能编译，但调用时出错：\n"
-                f"{traceback.format_exc(limit=3)}\n"
-                f"可用的名字：pd, np, rsi(c,n), ema(c,n), atr(bars,n), bb_pct(c,n,k)")
-
-    buf = io.StringIO()
-    try:
-        with redirect_stdout(buf):          # 别让策略里的 print 污染 MCP 协议
-            rep = check(bars, FuncStrategy("待审策略", fn),
-                        name="待审策略", claimed=claimed,
-                        costs=Costs(fee_per_side=fee_per_side),
-                        barrier_mult=barrier_mult, horizon=horizon)
-    except Exception:
-        return f"审计过程出错：\n{traceback.format_exc(limit=5)}"
-
-    out = [describe(prov), "", rep.render()]
-    noise = buf.getvalue().strip()
-    if noise:
-        out += ["", "（策略代码的输出）", noise[:2000]]
-    return "\n".join(out)
+    return _load_probe_check(fn, symbols, interval, claimed,
+                             barrier_mult, horizon, fee_per_side)
 
 
 @mcp.tool()
@@ -233,6 +225,75 @@ def save_mcp_reference(symbol: str, klines_json: str,
                 f"之后 audit_strategy 会用它核验本地行情。")
     except Exception as e:
         return f"保存失败：{type(e).__name__}: {e}"
+
+
+@mcp.tool()
+def strategy_vocabulary() -> str:
+    """列出「用大白话描述策略」时能用的全部说法。
+
+    在调用 audit_plain_language 之前先看一眼。这一层是【确定性解析】，
+    只认词汇表里的说法 —— 认不出会明确告诉你哪几个字没看懂，而不是
+    猜一段代码给你。
+    """
+    return VOCAB_DOC
+
+
+@mcp.tool()
+def audit_plain_language(description: str, symbols: list[str],
+                         interval: str = "1h", claimed: str = "",
+                         confirmed: bool = False, dry_run: bool = False,
+                         fee_per_side: float = 0.0005) -> str:
+    """用一句大白话描述策略，自动翻译成代码并跑完五道闸门。
+
+    例："RSI 超过 70 做空、低于 30 做多、持 12 小时"
+
+    和 audit_strategy 的区别：**这里不执行任何外部代码**。策略代码由
+    确定性解析器生成，只可能用到词汇表里的算子；词汇表外的说法会被
+    明确拒绝，不会猜。完整词汇表见 strategy_vocabulary。
+
+    ⚠ 返回的第一段永远是【解读回读】—— 把你的话按解析结果读回去。
+      **请把这段原样转述给用户核对。** 解析器可能理解错，而理解错
+      又没人发现的话，用户会拿着一份体检报告，以为审的是他想的那个策略。
+      那正是这个工具存在的意义所要消灭的东西。
+
+    description  策略的大白话描述
+    symbols      要审计的标的，例如 ["BTCUSDT", "ETHUSDT"]
+    interval     K 线周期。它决定「持 12 小时」换算成多少根 —— 传错了，
+                 审的就是另一个策略
+    claimed      这个策略自称的成绩，印在报告顶部作对照
+    confirmed    解析中若存在歧义（例如「跌破」有两种理解），默认只回读、
+                 不开跑；用户确认解读无误后带 confirmed=True 再调一次
+    dry_run      只看解读和生成的代码，不跑审计
+    """
+    try:
+        spec = parse_nl(description, interval)
+    except CannotParse as e:
+        return ("这句话我没法可靠地翻译成策略，所以不翻译 ——\n"
+                "猜一个给你，比直接说不会更糟。\n\n"
+                f"{e}\n\n"
+                "两条路：\n"
+                "  1. 换成词汇表里的说法（见下）\n"
+                "  2. 直接写 `def signal(bars):` 代码，走 audit_strategy\n\n"
+                f"{VOCAB_DOC}")
+
+    code = spec.to_code()
+    echo = [spec.explain(), "", "生成的代码：", "```python", code.rstrip(), "```"]
+
+    if dry_run:
+        return "\n".join(echo + ["", "（dry_run：没有跑审计）"])
+
+    if spec.warnings and not confirmed:
+        return "\n".join(echo + [
+            "", "─" * 58,
+            f"上面有 {len(spec.warnings)} 处是我替你做的选择，先请用户核对。",
+            "确认无误后带 confirmed=True 再调一次，才会真的跑审计。",
+            "这一步不能省 —— 解读错了而没人发现，报告审的就是另一个策略。"])
+
+    out = _load_probe_check(spec.to_strategy(), symbols, interval, claimed,
+                            spec.barrier_mult if spec.barrier_mult else 1.5,
+                            spec.horizon if spec.horizon else 12,
+                            fee_per_side, name=description.strip()[:40])
+    return "\n".join(echo + ["", "=" * 58, "", out])
 
 
 def main():
