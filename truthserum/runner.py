@@ -8,11 +8,17 @@ from .audits.lookahead import LookaheadAudit
 from .audits.nulltest import NullTestAudit
 from .audits.overlap import OverlapAudit
 from .audits.portfolio import PortfolioAudit
+from .audits.provenance import ProvenanceAudit
 from .core import Context, Costs, FuncStrategy, Strategy
 
-#: 顺序有意为之：前瞻是【最致命】的，先查。
-#: 一个偷看未来的策略，后面三项跑出来的所有数字都没有意义。
-AUDITS = [LookaheadAudit, OverlapAudit, NullTestAudit, PortfolioAudit]
+#: 顺序有意为之，从「最底层的前提」往上查：
+#:   ⓪ 数据本身对不对   —— 数据错了，后面全部没意义
+#:   ① 有没有偷看未来   —— 偷看了，后面的数字也没意义
+#:   ② 每笔期望有没有灌水
+#:   ③ 随机信号能不能也做出来
+#:   ④ 账户里最后剩多少钱  ← 唯一有资格下结论的那个
+AUDITS = [ProvenanceAudit, LookaheadAudit, OverlapAudit,
+          NullTestAudit, PortfolioAudit]
 
 
 def check(bars: dict[str, pd.DataFrame] | pd.DataFrame,
