@@ -114,7 +114,12 @@ class OverlapAudit(Audit):
             f"净 {a['net_uni']:+.4f}%",
         ]
         flipped = a["net_all"] > 0 >= a["net_uni"]
-        shrink = (1 - a["gross_uni"] / a["gross_all"]) if a["gross_all"] else 0.0
+        # ⚠ 缩水率只在【毛期望本来为正】时才有意义。
+        #   基数为负或接近零时，`1 - uni/all` 会算出没有意义的数
+        #   （实测过一次：−0.0816% → +0.0323% 被报成「缩水 140%」，
+        #    其实是变号变好了）。所以这里只在基数为正且不接近零时计算。
+        base = a["gross_all"]
+        shrink = (1 - a["gross_uni"] / base) if base > 1e-4 else 0.0
         if flipped:
             return AuditResult(
                 name=self.name, verdict=Verdict.FAILED,
@@ -125,6 +130,11 @@ class OverlapAudit(Audit):
             return AuditResult(
                 name=self.name, verdict=Verdict.FAILED,
                 headline=f"去掉重叠后毛期望缩水 {shrink*100:.0f}% —— 原数字被信号持续期加权了",
+                detail=det, numbers=a)
+        if base <= 1e-4:
+            return AuditResult(
+                name=self.name, verdict=Verdict.CLEAN,
+                headline="重叠没有把结论撑起来（毛期望本来就不为正，无从灌水）",
                 detail=det, numbers=a)
         return AuditResult(
             name=self.name, verdict=Verdict.CLEAN,
