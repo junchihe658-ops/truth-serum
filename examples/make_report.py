@@ -17,6 +17,7 @@ import pandas as pd
 
 from truthserum import check
 from truthserum.data import describe, load
+from truthserum.naive import claim_line, naive_backtest
 from truthserum.report_html import save_html
 
 SYMS = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT"]
@@ -54,13 +55,21 @@ bars, prov = load(SYMS, "1h")
 note = describe(prov)          # 多行保留 —— 排版交给渲染层
 
 CASES = [
-    ("overfit", "全样本调参的三因子共振", overfit, "精选参数，回测年化 +112%"),
-    ("peeking", "用了明天的收盘价", peeking, "回测年化 +9400%"),
-    ("honest", "诚实的 RSI 动量", honest, "教科书策略，回测年化 +38%"),
+    ("overfit", "全样本调参的三因子共振", overfit, "精选参数"),
+    ("peeking", "用了明天的收盘价", peeking, ""),
+    ("honest", "诚实的 RSI 动量", honest, "教科书策略"),
 ]
 
+# ⚠ 「策略自称」那一行必须是【真算出来的】。
+#   初版这里写死了 +112% / +9400% / +38% —— 全是我编的。一个讲「不要自欺」
+#   的工具，在自己的样例报告里摆编造的数字，评审一句「这数哪来的」就塌了。
+#   现在用 truthserum/naive.py 在同一份真实行情上跑「大多数人的那个算法」，
+#   得出的就是这个策略的作者真会拿去宣传的数字。
 print("生成报告…")
-for slug, name, fn, claim in CASES:
+for slug, name, fn, prefix in CASES:
+    claim = claim_line(naive_backtest(bars, fn))
+    if prefix:
+        claim = f"{prefix}，{claim}"
     rep = check(bars, fn, name=name, claimed=claim)
     p = save_html(rep, f"reports/{slug}.html", data_note=note)
     marks = "".join({"clean": "✅", "failed": "❌", "unusable": "⛔",
