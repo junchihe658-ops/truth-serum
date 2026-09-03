@@ -42,6 +42,8 @@ class AuditResult:
     numbers: dict[str, Any] = field(default_factory=dict)
     #: 自检证据：这个检测器在【已知有 bug】的输入上抓到了什么
     self_check_evidence: str = ""
+    #: 这道闸门声称能抓什么（从 Audit.catches 带过来，供报告展示）
+    catches: str = ""
 
     @property
     def trustworthy(self) -> bool:
@@ -93,15 +95,16 @@ class Audit:
                 name=self.name, verdict=Verdict.UNUSABLE,
                 headline="检测器自检未通过 —— 不给出任何结论",
                 detail=[f"它本该抓到人为植入的 bug，但没抓到：{e}",
-                        "在检测器自己被修好之前，它说『干净』是没有意义的。"])
+                        "在检测器自己被修好之前，它说『干净』是没有意义的。"], catches=self.catches)
         except Exception as e:          # 自检本身崩了，同样不可信
             return AuditResult(
                 name=self.name, verdict=Verdict.UNUSABLE,
                 headline=f"检测器自检过程异常：{type(e).__name__}: {e}",
-                detail=["自检跑不起来，就无法证明这个检测器有效。"])
+                detail=["自检跑不起来，就无法证明这个检测器有效。"], catches=self.catches)
 
         res = self._run(ctx)
         res.self_check_evidence = evidence
+        res.catches = self.catches
         return res
 
 
@@ -129,9 +132,12 @@ class TruthReport:
             return ("⛔ 无法判定：有检测器自检未通过。"
                     "我们无法区分『真的干净』和『检测器瞎了』。")
         if self.failures:
-            names = "、".join(r.name for r in self.failures)
+            names = "、".join(r.name.split("（")[0].strip() for r in self.failures)
             return f"❌ 这个数字不可信：{len(self.failures)} 项审计未通过（{names}）"
-        return "✅ 四项审计全部通过 —— 经得起我们已知的所有自欺检验"
+        n = sum(1 for r in self.results if r.verdict is Verdict.CLEAN)
+        skipped = sum(1 for r in self.results if r.verdict is Verdict.SKIPPED)
+        tail = f"（另有 {skipped} 项因前置条件不满足跳过）" if skipped else ""
+        return f"✅ {n} 项审计全部通过 —— 经得起我们已知的所有自欺检验{tail}"
 
     def render(self) -> str:
         bar = "═" * 78
