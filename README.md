@@ -34,8 +34,16 @@ python examples/demo.py
 ## 装进你自己的 Claude
 
 ```bash
+pip install -e .
 claude mcp add truth-serum -- python -m truthserum.server
 ```
+
+> **`pip install -e .` 这一步不能省。** 不装的话，`python -m truthserum.server`
+> 只有在当前目录正好是本仓库时才找得到模块。而 MCP server 起不来**通常不报错**，
+> 只会安静地不出现在工具列表里 —— 是最难查的那种失败。
+>
+> Windows 上如果 `python` 指向应用商店的占位程序，换成 Python 的绝对路径。
+> 装完**要新开一个会话**：MCP 工具只在会话启动时加载。
 
 然后直接说：
 

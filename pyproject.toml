@@ -1,0 +1,38 @@
+# 打包配置
+#
+# 为什么需要它：README 原先写的
+#     claude mcp add truth-serum -- python -m truthserum.server
+# 只有在【当前目录正好是本仓库】时才找得到模块。评审在别的目录敲这条命令，
+# 得到的是 ModuleNotFoundError —— 而 MCP server 起不来通常不会弹窗，
+# 只会安静地不出现在工具列表里，最难查。
+#
+# `pip install -e .` 之后包进入 sys.path，上面那条命令在任何目录都成立。
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "truth-serum"
+version = "0.2.0"
+description = "一个不肯对你撒谎的回测审计器：五道闸门，每道都先证明自己抓得到已知 bug"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "pandas>=2.0",
+    "numpy>=1.24",
+    "requests>=2.28",
+    "pyarrow>=12.0",   # parquet 缓存的引擎
+    "mcp>=1.0",        # MCP server
+]
+
+[project.scripts]
+# 装完可以直接 `truth-serum` 启动 MCP server，不必记 -m 那一串
+truth-serum = "truthserum.server:main"
+
+[project.urls]
+Repository = "https://github.com/junchihe658-ops/truth-serum"
+
+[tool.setuptools]
+packages = ["truthserum", "truthserum.audits"]
