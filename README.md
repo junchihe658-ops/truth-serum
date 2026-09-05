@@ -21,31 +21,78 @@ The gap decomposes into two things you can compute — see *Where the gap comes 
 
 ---
 
-## An agent that optimizes itself into bias
+## The agent it catches is *your* agent
+
+The most important thing this tool does is not audit a strategy. It is this:
+
+**Truth Serum remembers how many strategies you have tried in this session.**
+
+Ask your Claude to find a strategy that passes the gates. It proposes one, a gate
+fails, it reads *why*, and proposes another. That is real reasoning — and it is
+also, precisely, **"I tried many and this one won."**
+
+```
+Attempt 1   ⑤ not checked  (one trial — "best of 1" carries no information)
+Attempt 2   p ≈ 0.175
+Attempt 3   p ≈ 0.275
+Attempt 4   p ≈ 0.550
+Attempt 5   p ≈ 0.100      ← a genuinely better result appeared, so p drops
+Attempt 6   p ≈ 0.100
+```
+
+Every audit report now opens with your session history, and gate ⑤ recomputes
+against the **cumulative** number of attempts. Two tools expose it:
+`search_history` and `reset_search_history`.
+
+`reset_search_history`'s own documentation says the quiet part out loud: clearing
+the log does not make the search go away, it only makes gate ⑤ blind to it. The
+ability to clear is itself an interface you can deceive yourself through, so the
+warning lives in the tool description.
+
+**There is no scripted reveal.** ⑤ starts computing from the second attempt
+(below that, "the best of one random trial" is one random trial — the comparison
+carries no information), and whether it flags is decided entirely by the p-value.
+No "fires on attempt 5" switch exists, and none will be added.
+
+A tool built to catch "I tried many and picked the best" catches, first of all,
+the agent that is using it.
+
+---
+
+## An offline agent, for a reproducible demo
 
 ```bash
-python examples/agent_demo.py     # ~16 seconds
+python examples/agent_demo.py     # ~60 seconds
 ```
 
 `TunerAgent` is given one goal — maximize per-trade expectancy — and a family of
-RSI strategies. It searches all 147 parameter combinations, picks the best, and
-logs **every single trial**.
+RSI strategies. It runs the gates each round, reads **which gate failed**, and
+changes where it searches next. Round 2 actually fixes gate ②; round 3 breaks it
+again. Every trial across every round accumulates into one `SearchLog`.
+
+Its adaptation rules are a hand-written table, not reasoning — which is exactly
+why the section above matters more. This one exists so the behaviour is
+reproducible offline, without an LLM in the loop.
 
 The agent is completely honest: it never peeks at the future, never touches the
-data, and every step is reproducible. It only does one thing — **it picks the
-best of 147.**
+data, and every step is reproducible. It only does one thing — **it keeps the
+best of everything it tried.**
 
 ```
-Agent's best        −0.1017% per trade   (RSI(21) > 70 / < 38)
-Median of its 147   −0.1663% per trade
+Round 1    9 trials   best −0.1297% per trade   ②③④ fail  → widen thresholds
+Round 2   18 trials   best −0.1094% per trade   ② PASSES, ③④ fail → change period
+Round 3   27 trials   best −0.1002% per trade   ②③④ fail again
 
-Random search, same 147 draws, best-of:   −0.0624% median
-                                          ↑ better than what the agent picked
-
-⑤ Search selection bias  →  ❌  p ≈ 1.000
+⑤ Search selection bias  →  ❌  p ≈ 0.800
+   random search over the same 27 draws does at least as well, 80% of the time
 ```
 
-**Random guessing 147 times beats the agent's carefully optimized parameters.**
+The metric really does improve every round, and in round 2 the agent genuinely
+fixes a gate. Then ⑤ points out that the improvement is explainable by having
+tried 27 times.
+
+Note the cumulative column. Round by round the agent only ever feels like it
+"tried 9 this time" — but selection bias is counted on the **total**.
 
 This is not cheating. It is what single-metric optimization does — to agents and
 to humans alike. The difference is that a human tuning parameters usually
@@ -53,7 +100,7 @@ doesn't record how many combinations they tried, so this entire layer of bias
 disappears from view.
 
 That is why `SearchLog` is mandatory: an agent that hands you only its winner,
-and not the 146 losers, has already hidden the most common form of self-deception.
+and not the losers, has already hidden the most common form of self-deception.
 
 ---
 
@@ -93,7 +140,7 @@ Then just say:
 
 > Audit this strategy with truth-serum: short when RSI > 70, long when RSI < 30, hold 12 hours
 
-Six tools are exposed:
+Eight tools are exposed:
 
 | Tool | What it does |
 |---|---|
@@ -103,6 +150,8 @@ Six tools are exposed:
 | `audit_strategy` | Feed a `signal(bars)` function directly |
 | `fetch_market_data` | Pull Binance klines into the local cache |
 | `save_mcp_reference` | Accept klines from the **official Binance MCP** as a trusted reference |
+| `search_history` | How many strategies you have tried this session, and which won |
+| `reset_search_history` | Clear it — with a warning that clearing hides the bias, not removes it |
 
 That last one is **two MCP servers cooperating**: your Claude calls
 `binance-mcp-server` for klines, hands the raw JSON to Truth Serum, which stores
@@ -164,7 +213,8 @@ above it is meaningless.
 
 ③ and ⑤ are not the same check. ③ shuffles the signals of a *single* strategy.
 ⑤ asks whether the *winner of a search* beats what random search of the same size
-would produce. An agent that searches 147 combinations passes ③ and fails ⑤.
+would produce. An agent that tries a handful of strategies in one session passes ③ each time
+and fails ⑤.
 
 ⑤ requires a `SearchLog`. Without one it reports **not checked** — never "fine".
 Not checked and no problem are different statements.
@@ -345,7 +395,8 @@ truthserum/
 ├── naive.py          The DELIBERATELY WRONG backtester — the thing being debunked
 ├── report_html.py    Single-file HTML report, zero external dependencies
 ├── runner.py         check() entry point
-├── server.py         MCP server (six tools)
+├── server.py         MCP server (eight tools)
+├── session.py        Session search log — the agent it catches is your agent
 ├── agents/
 │   └── tuner.py      The searching agent — and the auditor's best target
 └── audits/

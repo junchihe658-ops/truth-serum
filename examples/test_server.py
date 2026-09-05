@@ -1,4 +1,4 @@
-"""验证 MCP server 的四个工具都能正常工作
+"""验证 MCP server 的工具都能正常工作
 
 分两层：
   1. 直接调工具函数 —— 验证业务逻辑
@@ -28,7 +28,7 @@ print("=" * 74)
 from truthserum import server as S
 
 gates = S.list_gates()
-ck("list_gates 返回五道闸门", all(g in gates for g in ("⓪", "①", "②", "③", "④")))
+ck("list_gates 列全了闸门", all(g in gates for g in ("⓪", "①", "②", "③", "④", "⑤")))
 ck("说明了自检机制", "自检不过就返回" in gates)
 
 GOOD = '''
@@ -100,7 +100,7 @@ r = S.audit_plain_language("EMA12 上穿 EMA48 做多", ["ETHUSDT"])
 ck("有歧义且未确认时不跑审计", "策略体检报告" not in r and "confirmed=True" in r)
 ck("并说明了歧义在哪", "穿越那一根" in r)
 
-print("\n  自然语言 → 五道闸门，跑一次真的（ETHUSDT，可能要 1~2 分钟）…")
+print("\n  自然语言 → 全部闸门，跑一次真的（ETHUSDT，可能要 1~2 分钟）…")
 r = S.audit_plain_language("RSI 超过 70 做空、低于 30 做多、持 12 小时",
                            ["ETHUSDT"], claimed="回测年化 +180%",
                            confirmed=True)

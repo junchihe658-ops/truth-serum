@@ -116,7 +116,7 @@ def fetch_market_data(symbols: list[str], interval: str = "1h",
 def _load_probe_check(fn, symbols, interval, claimed,
                       barrier_mult, horizon, fee_per_side,
                       name: str = "待审策略", via: str = "代码") -> str:
-    """加载行情 → 试调 → 跑五道闸门。两条审计入口共用这一份。
+    """加载行情 → 试调 → 记进会话日志 → 跑全部闸门。两条审计入口共用这一份。
 
     抽出来是因为两条入口（手写代码 / 自然语言）必须走【完全相同】的流程。
     要是哪天只改了一边，两条路会对同一个策略给出不同结论 ——
