@@ -62,7 +62,10 @@ act("第二幕", "agent 接手，自己找更好的参数")
 
 print()
 agent = TunerAgent()
-tuned, log = agent.run(bars)
+# 有反馈的循环 —— 跑闸门、读哪道没过、据此改搜索方向，再来一轮。
+# 用 run() 也能得到结果，但那只是个 for 循环把网格遍历完，
+# 没有观察也没有适应，叫它 agent 是抬举它。
+tuned, log = agent.run_with_feedback(bars, rounds=3)
 
 tuned_claim = claim_line(naive_backtest(bars, tuned))
 print(f"\n  优化后按同一套算法：{tuned_claim}")
@@ -85,7 +88,16 @@ print(f"""
     · 没改数据     —— ⓪ 号闸门放行
     · 每一步可复现 —— 同样的输入永远得到同样的输出
 
-  它唯一做的事情是：**在 {log.n_trials} 组参数里挑了最好的那组。**
+  它唯一做的事情是：**在累计 {log.n_trials} 组参数里挑了最好的那组。**
+""")
+
+print("  它每一轮是怎么「改进」的：\n")
+for rd, cum, sc, label, failed in getattr(agent, "trail", []):
+    print(f"    第 {rd} 轮  累计试了 {cum:>3} 组  最好 {sc:+.4f}%/笔  {label}")
+    print(f"            没过：{'、'.join(failed) if failed else '（全过）'}")
+print(f"""
+  注意累计那一列。分轮搜索最容易骗人的地方就在这儿 ——
+  agent 每一轮只觉得「我这轮试了 9 组」，但选择偏差是按【累计】次数算的。
 
   搜索结果的分布：
     最好   {log.best_score:+.4f}%/笔   （{log.best_label}）

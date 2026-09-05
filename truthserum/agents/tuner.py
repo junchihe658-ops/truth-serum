@@ -106,6 +106,7 @@ class TunerAgent:
             n_trials=len(self.space), scores=scores,
             best_score=best, best_label=best_c.label,
             space=f"RSI 周期 × 做多阈值 × 做空阈值 = {len(self.space)} 组")
+        self.last_log = log
 
         if self.verbose:
             print(f"  [{self.name}] 搜完 {len(self.space)} 组。"
@@ -114,4 +115,110 @@ class TunerAgent:
             print(f"  [{self.name}] ⚠ 我只知道「数字变好了」。"
                   f"这里面有多少是运气，我自己看不出来 —— 那是审计器的事。")
 
+        return best_c.make(), log
+
+    # ────────────────────────────────────────────────────────
+    # 有反馈的循环：这才是「agent」，上面那个只是遍历
+    # ────────────────────────────────────────────────────────
+    def run_with_feedback(self, bars, rounds: int = 3, check_fn=None,
+                          **check_kw):
+        """跑闸门 → 读哪道没过 → 据此调整搜索方向 → 再来。
+
+        和 `run()` 的区别很实在：`run()` 是一个 for 循环把网格遍历完，
+        没有观察、没有适应，叫它 agent 是抬举它。这个方法才有闭环 ——
+        它看得到审计结果，并且**根据具体是哪道闸门没过**改变下一轮怎么搜。
+
+        调整规则是照人调参的习惯写的，每一条都写明了理由：
+
+          ② 重叠没过 → 信号太"黏"，同一段行情被反复计数。
+                        把阈值拉开，让触发更稀疏。
+          ③ 本底没过 → 和随机分不开，换个 RSI 周期，去别的区域找。
+          ④ 账户没过 → 交易太频繁被成本吃掉，进一步收紧阈值。
+
+        ⚠ 关键在于：**每一轮的每一次试验都累加进同一份 SearchLog。**
+          分轮搜索最容易产生的错觉是「我这一轮只试了 36 组」——
+          可选择偏差是按【累计】试验次数算的，不是按最后一轮。
+        """
+        from ..runner import check as _default_check
+        check_fn = check_fn or _default_check
+
+        pre = {s: barrier_outcomes(df, self.barrier_mult, self.horizon)[:2]
+               for s, df in bars.items()}
+        periods = [7, 14, 21]
+        pi, spread = 1, 0            # 当前用哪个周期、阈值拉开多少
+        all_scores, best, best_c, trail = [], -np.inf, None, []
+
+        for rd in range(1, rounds + 1):
+            his = [60 + spread + k for k in (0, 3, 6)]
+            los = [40 - spread - k for k in (0, 3, 6)]
+            grid = [Candidate(periods[pi], h, l) for h in his for l in los]
+
+            if self.verbose:
+                print(f"\n  [第 {rd} 轮] RSI({periods[pi]})，阈值 "
+                      f"{his[0]}~{his[-1]} / {los[-1]}~{los[0]}，共 {len(grid)} 组")
+
+            r_best, r_c = -np.inf, None
+            for c in grid:
+                fn = c.make()
+                vals = []
+                for s, df in bars.items():
+                    z = np.asarray(fn(df), dtype=float).reshape(-1)
+                    v = net_expectancy(df, z, self.barrier_mult, self.horizon,
+                                       self.costs.round_trip, pre=pre[s])
+                    if np.isfinite(v):
+                        vals.append(v)
+                sc = float(np.mean(vals)) if vals else float("nan")
+                all_scores.append(sc)
+                if np.isfinite(sc) and sc > r_best:
+                    r_best, r_c = sc, c
+            if r_c is None:
+                continue
+            if r_best > best:
+                best, best_c = r_best, r_c
+
+            if self.verbose:
+                print(f"           本轮最好 {r_best:+.4f}%/笔  {r_c.label}")
+                print(f"           累计已试 {len(all_scores)} 组")
+                print(f"           跑闸门看看…")
+
+            rep = check_fn(bars, r_c.make(), name=r_c.label, **check_kw)
+            failed = [x.name.split("（")[0].strip() for x in rep.results
+                      if x.verdict.value == "failed"]
+            trail.append((rd, len(all_scores), r_best, r_c.label, list(failed)))
+
+            if self.verbose:
+                print(f"           没过的：{'、'.join(failed) if failed else '（全过）'}")
+
+            # ── 读结果，改方向 ──
+            if not failed:
+                if self.verbose:
+                    print("           全过了，停。")
+                break
+            if any("重叠" in f for f in failed):
+                spread += 4
+                why = "信号太黏，同一段行情被反复计数 → 把阈值拉开，让触发更稀疏"
+            elif any("本底" in f for f in failed):
+                pi = (pi + 1) % len(periods)
+                why = f"和随机分不开 → 换个周期，去 RSI({periods[pi]}) 那片找"
+            else:
+                spread += 2
+                why = "账户还是亏 → 交易太频繁被成本吃掉，再收紧一点"
+            if self.verbose and rd < rounds:
+                print(f"           → {why}")
+
+        if best_c is None:
+            raise RuntimeError("搜索没有产出任何有效结果")
+
+        log = SearchLog(
+            n_trials=len(all_scores), scores=all_scores,
+            best_score=best, best_label=best_c.label,
+            space=f"{rounds} 轮反馈式搜索，累计 {len(all_scores)} 组")
+        self.last_log, self.trail = log, trail
+
+        if self.verbose:
+            print(f"\n  [{self.name}] {len(trail)} 轮跑完，累计试了 "
+                  f"{len(all_scores)} 组，最好 {best:+.4f}%/笔")
+            print(f"  [{self.name}] ⚠ 我每一轮都在「根据反馈改进」。"
+                  f"但改进的是【指标】，不是【策略真的变好了】——"
+                  f"这两件事我自己分不出来。")
         return best_c.make(), log
