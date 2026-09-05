@@ -45,6 +45,31 @@ class FuncStrategy:
 
 
 @dataclass
+class SearchLog:
+    """一次参数搜索的全过程记录。
+
+    ## 为什么必须记全过程，而不是只记胜出者
+
+    「我试了 200 组，这组最好」和「我只试了这一组，它就是好」——
+    成绩可能一模一样，可信度差着数量级。只交出胜出者，选择偏差就消失在
+    视野之外了，而那正是最常见的自欺方式。
+
+    所以搜索型 agent 必须把每一次试验都记下来，⑤ 号闸门才有东西可查。
+    """
+    n_trials: int                    # 一共试了多少组
+    scores: list[float]              # 每组的成绩（去重叠净每笔期望 %）
+    best_score: float
+    best_label: str                  # 胜出参数的人话描述
+    space: str = ""                  # 搜索空间的描述，写进报告
+
+    @property
+    def median(self) -> float:
+        import numpy as _np
+        f = [s for s in self.scores if _np.isfinite(s)]
+        return float(_np.median(f)) if f else float("nan")
+
+
+@dataclass
 class Costs:
     """成本模型。默认值来自 2026-09 在 OKX 永续上的实测。
 
@@ -89,6 +114,10 @@ class Context:
     leverage: int = 3
     n_folds: int = 8
     seed: int = 20260902
+
+    #: 搜索日志。策略是「搜出来的」时才有值 —— ⑤ 号闸门要靠它算选择偏差。
+    #: 没有就是没有：⑤ 号会判「未检」，而不是假装查过了。
+    search_log: "SearchLog | None" = None
 
     def __post_init__(self):
         for s, df in self.bars.items():
@@ -143,6 +172,38 @@ def barrier_outcomes(df: pd.DataFrame, mult: float, horizon: int):
             if d == 1:
                 hit_time[i] = j_hit
     return rl, rs, hit_time
+
+
+def dedup_indices(sig: np.ndarray, valid: np.ndarray, horizon: int) -> np.ndarray:
+    """去重叠：一笔持满 horizon 之前不再开新仓，返回保留下来的行号。
+
+    ② 号和 ⑤ 号闸门都要用。**必须共用一份** —— 各写各的就是数字漂移的温床，
+    2026-09-05 那个「净期望被跨标的求和」的 bug 就是这么来的。
+    """
+    idx = np.where(valid & (sig != 0))[0]
+    keep, last_end = [], -1
+    for i in idx:
+        if i > last_end:
+            keep.append(i)
+            last_end = i + horizon
+    return np.asarray(keep, dtype=int)
+
+
+def net_expectancy(bars: pd.DataFrame, sig: np.ndarray, mult: float,
+                   horizon: int, cost: float,
+                   pre: tuple | None = None) -> float:
+    """去重叠后的净每笔期望（百分数）。与 ②③ 口径一致。
+
+    pre 传入预先算好的 (rl, rs) 可以省掉最贵的一步 —— 屏障结果只依赖 K 线，
+    不依赖信号，所以搜索几百组参数时算一次就够。
+    """
+    rl, rs = pre if pre is not None else barrier_outcomes(bars, mult, horizon)[:2]
+    valid = np.isfinite(rl) & np.isfinite(rs)
+    k = dedup_indices(np.asarray(sig, dtype=float), valid, horizon)
+    if len(k) < 30:
+        return float("nan")
+    r = np.where(sig[k] > 0, rl[k], rs[k])
+    return float(r.mean() * 100 - cost * 100)
 
 
 def fold_bounds(index: pd.DatetimeIndex, n_folds: int, warmup_frac: float = 0.25):

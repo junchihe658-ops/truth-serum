@@ -1,4 +1,4 @@
-"""把四道闸门串起来"""
+"""把各道闸门串起来 —— 数量写在 AUDITS 里，别在别处写死"""
 from __future__ import annotations
 
 import pandas as pd
@@ -9,6 +9,7 @@ from .audits.nulltest import NullTestAudit
 from .audits.overlap import OverlapAudit
 from .audits.portfolio import PortfolioAudit
 from .audits.provenance import ProvenanceAudit
+from .audits.search import SearchBiasAudit
 from .core import Context, Costs, FuncStrategy, Strategy
 
 #: 顺序有意为之，从「最底层的前提」往上查：
@@ -17,8 +18,9 @@ from .core import Context, Costs, FuncStrategy, Strategy
 #:   ② 每笔期望有没有灌水
 #:   ③ 随机信号能不能也做出来
 #:   ④ 账户里最后剩多少钱  ← 唯一有资格下结论的那个
+#:   ⑤ 这个成绩是不是「搜出来的」 —— 只在策略带搜索日志时才查
 AUDITS = [ProvenanceAudit, LookaheadAudit, OverlapAudit,
-          NullTestAudit, PortfolioAudit]
+          NullTestAudit, PortfolioAudit, SearchBiasAudit]
 
 
 def check(bars: dict[str, pd.DataFrame] | pd.DataFrame,

@@ -5,7 +5,7 @@
 四幕：
   一  用户说一句大白话，Truth Serum 把解读回读给他确认
   二  用【大多数人的算法】在真实币安行情上算，得到一个漂亮数字
-  三  五道闸门逐道过
+  三  闸门逐道过
   四  两个数字并排，逐条说清差在哪
 
 ⚠ 全片没有一个编造的数字。第二幕那个漂亮数字是 truthserum/naive.py 在同一份
@@ -73,7 +73,7 @@ print(f"\n  ⚠ 这个数字是【真的】—— 真实币安行情、真实策
 print(f"    只是算法漏了两件事，第四幕再说。")
 
 # ══════════════════════════════════════════════════════════════
-act("三", "五道闸门")
+act("三", "闸门逐道过")
 
 print()
 rep = check(bars, fn, name=SAID, claimed=claim,
@@ -117,7 +117,7 @@ failed = [r for r in rep.results if r.verdict is Verdict.FAILED]
 clean = [r for r in rep.results if r.verdict is Verdict.CLEAN]
 other = [r for r in rep.results if r.verdict not in (Verdict.FAILED, Verdict.CLEAN)]
 
-print(f"  五道闸门这一趟的实际结果：{len(failed)} 项异常，{len(clean)} 项未见异常"
+print(f"  {len(rep.results)} 道闸门这一趟的实际结果：{len(failed)} 项异常，{len(clean)} 项未见异常"
       + (f"，{len(other)} 项未检/无效" if other else "") + "\n")
 for r in failed:
     print(f"    ✗ {r.name.split('（')[0].strip():<16}{r.headline}")
