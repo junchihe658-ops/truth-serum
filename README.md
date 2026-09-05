@@ -1,281 +1,316 @@
 # Truth Serum
 
-**一个不肯对你撒谎的回测审计器。**
+**English** | [中文](README.zh-CN.md)
+
+**A backtest auditor that refuses to lie to you.**
 
 > Binance Agent OS Mini Hackathon · Track A
 
-每个交易 agent 的 demo 都会给你看一条漂亮的回测曲线。
-这个项目做相反的事：**告诉你那条曲线里有多少是真的。**
+Every trading-agent demo shows you a beautiful equity curve.
+This project does the opposite: **it tells you how much of that curve is real.**
 
 ```
-你说：  「RSI 超过 60 做多、低于 40 做空，持 12 小时」
+You say:   "Long when RSI > 60, short when RSI < 40, hold 12 hours"
 
-宣传的数字   SOLUSDT 年化 +62.2%（541 笔，胜率 53.4%）
-账户的数字   平均折收益 −24.98%，复合 −90.4%
+The number you'd advertise    SOLUSDT, +62.2% annualized (541 trades, 53.4% win rate)
+The number in your account    −24.98% mean per fold, −90.4% compounded
 ```
 
-两个数字都是真的，来自同一份币安行情、同一段策略代码。
-差额不是玄学，是两桩能算出来的事 —— 往下第四节。
+Both numbers are real. Same Binance data, same strategy code.
+The gap is not mysterious — it decomposes into two things you can compute.
+See section 4.
 
 ---
 
-## 30 秒看懂它在干什么
+## 30 seconds
 
 ```bash
 pip install -r requirements.txt
 python examples/demo.py
 ```
 
-四幕：一句大白话 → 大多数人会得到的漂亮数字 → 五道闸门 → 差在哪。
-全程没有一个编造的数字。
+Four acts: one plain-English sentence → the pretty number most people would get →
+five gates → exactly where the gap comes from.
+
+**Not a single fabricated number in the whole thing.** The pretty number is
+produced by a deliberately-wrong backtester (`truthserum/naive.py`) running on
+the same real Binance data as the audit.
 
 ---
 
-## 装进你自己的 Claude
+## Install it into your own Claude
 
 ```bash
 pip install -e .
 claude mcp add truth-serum -- python -m truthserum.server
 ```
 
-> **`pip install -e .` 这一步不能省。** 不装的话，`python -m truthserum.server`
-> 只有在当前目录正好是本仓库时才找得到模块。而 MCP server 起不来**通常不报错**，
-> 只会安静地不出现在工具列表里 —— 是最难查的那种失败。
+> **Don't skip `pip install -e .`.** Without it, `python -m truthserum.server`
+> only resolves when your current directory happens to be this repo. And an MCP
+> server that fails to start **usually doesn't report an error** — it just
+> silently doesn't appear in the tool list. That's the worst kind of failure.
 >
-> Windows 上如果 `python` 指向应用商店的占位程序，换成 Python 的绝对路径。
-> 装完**要新开一个会话**：MCP 工具只在会话启动时加载。
+> On Windows, if `python` points at the Microsoft Store stub, use the absolute
+> path to your Python. **Start a new session afterwards** — MCP tools are only
+> loaded at session start.
 
-然后直接说：
+Then just say:
 
-> 用 truth-serum 审计这个策略：RSI 超过 70 做空、低于 30 做多，持 12 小时
+> Audit this strategy with truth-serum: short when RSI > 70, long when RSI < 30, hold 12 hours
 
-暴露六个工具：
+Six tools are exposed:
 
-| 工具 | 干什么 |
+| Tool | What it does |
 |---|---|
-| `list_gates` | 五道闸门各抓什么 |
-| `strategy_vocabulary` | 「用大白话描述策略」能用哪些说法 |
-| `audit_plain_language` | **一句话 → 代码 → 五道闸门** |
-| `audit_strategy` | 直接喂一段 `signal(bars)` 代码 |
-| `fetch_market_data` | 把币安行情拉到本地缓存 |
-| `save_mcp_reference` | 接收**官方 Binance MCP** 取到的 K 线作为核验参照 |
+| `list_gates` | What each of the five gates catches |
+| `strategy_vocabulary` | Which phrasings the plain-language layer understands |
+| `audit_plain_language` | **one sentence → code → five gates** |
+| `audit_strategy` | Feed a `signal(bars)` function directly |
+| `fetch_market_data` | Pull Binance klines into the local cache |
+| `save_mcp_reference` | Accept klines from the **official Binance MCP** as a trusted reference |
 
-最后一个是**两个 MCP 协同**：你的 Claude 先调 `binance-mcp-server` 取 K 线，
-把原始 JSON 交给 truth-serum 存成参照，之后每次审计自动逐根核验本地行情。
-一个讲「不要盲信」的工具，自己的数据也得有人管。
+That last one is **two MCP servers cooperating**: your Claude calls
+`binance-mcp-server` for klines, hands the raw JSON to Truth Serum, which stores
+it as a reference and from then on verifies the local market data bar by bar.
+
+A tool that preaches "don't trust blindly" had better not trust its own data feed.
 
 ---
 
-## 自然语言这一层，宁可拒绝也不猜
+## The plain-language layer refuses rather than guesses
 
-**不调 LLM，也不执行任何外部代码。** 一套明确词汇表 + 一个只认这套词汇的
-确定性解析器；代码由它生成，只可能用到词汇表里的算子。
+**No LLM call. No external code execution.** A fixed vocabulary plus a
+deterministic parser; the generated code can only use operators from that
+vocabulary.
 
-它做的第一件事是**把解读回读给你确认**：
-
-```
-我理解成这样（请核对）：
-  1. 24小时涨跌幅 > 3% 且 收盘价 > MA(20)   → 做多
-  2. 收盘价 下穿 MA(20)                    → 观望
-
-⚠ 这几处我替你做了选择，看看对不对：
-  · 24小时 = 24 根 1h K 线
-  · 「跌破 MA20」省略了主语，我按上一条的「收盘价」理解
-  · 「下穿」我理解成【只在穿越那一根触发】。
-    若你要的是「只要低于就一直算数」，请改说「低于」
-```
-
-有歧义而未经确认，**它不会开跑**——解读错了没人发现，出来的报告会审着
-另一个策略，那正是这个工具要消灭的东西。
-
-认不出的说法一律拒绝，并指名是哪几个字：
+The first thing it does is **read its interpretation back to you**:
 
 ```
-> MACD 金叉就买入
-没看懂「MACD 金叉」：开头这个量不在词汇表里
+Here's how I understood it (please check):
+  1. 24h return > 3% AND close > MA(20)   → long
+  2. close crosses below MA(20)           → flat
+
+⚠ I made these choices for you — verify them:
+  · "24 hours" = 24 bars on a 1h timeframe
+  · "below MA20" had no subject; I carried over "close" from the previous rule
+  · "crosses below" = triggers only on the crossing bar.
+    If you meant "whenever it is below", say "below" instead.
 ```
 
-**一个把你的话猜成代码的翻译器，比不翻译更危险。**
-超出词汇表的正常路径是让模型直接写 `signal(bars)`，走 `audit_strategy` ——
-那条路上代码你看得见，你自己判断。
+If the parse contains an ambiguity and you haven't confirmed it, **it will not
+run**. A misread that nobody notices produces a report that audits a *different*
+strategy than the one you meant — precisely the failure mode this tool exists to
+eliminate.
+
+Anything outside the vocabulary is rejected, naming the exact words it did not
+understand:
+
+```
+> buy on MACD golden cross
+Could not parse "MACD golden cross": that quantity is not in the vocabulary
+```
+
+**A translator that guesses your words into code is worse than no translator.**
+For anything beyond the vocabulary, the intended path is to have the model write
+`signal(bars)` directly and pass it to `audit_strategy` — there the code is
+visible and you judge it yourself.
 
 ---
 
-## 五道闸门
+## Five gates
 
-从「最底层的前提」往上查。前提错了，后面的数字全部没有意义。
+Checked from the most basic premise upward. If a premise is wrong, every number
+above it is meaningless.
 
-| 闸门 | 抓什么 |
+| Gate | What it catches |
 |---|---|
-| **⓪ 数据出处核验** | 你的 K 线本身是不是真的（拿官方 MCP 逐根比对） |
-| **① 前瞻检测** | 未来数据改变了过去的信号 |
-| **② 重叠计数** | 「平均每笔期望」被信号持续期灌水 |
-| **③ 零假设本底** | 「筛了很多个，最好的那个看起来不错」 |
-| **④ 组合层模拟** | 账户里最后到底剩多少钱（唯一有资格下结论的一道） |
+| **⓪ Data provenance** | Whether your klines are real at all (bar-by-bar vs the official MCP) |
+| **① Lookahead** | Future data changing past signals |
+| **② Overlap counting** | "Average expectancy per trade" inflated by how long a signal persists |
+| **③ Null baseline** | "I screened many, and the best one looks good" |
+| **④ Portfolio simulation** | What's actually left in the account — the only gate entitled to a verdict |
 
-### 三个真实案例（`python examples/make_report.py`）
+### Three real cases (`python examples/make_report.py`)
 
-在 4 个币、每币 9000 根 1h K 线上跑：
+Run on 4 symbols, 9000 hourly bars each:
 
 ```
 ⓪①②③④
-✅❌✅✅✅   偷看明天的收盘价       自称 SOLUSDT 年化 +3682.5%
-✅✅✅❌❌   全样本调参的三因子共振   自称 BTCUSDT 年化 +51.0%
-✅✅❌❌❌   诚实的 RSI 动量        自称 SOLUSDT 年化 +62.2%
+✅❌✅✅✅   Peeks at tomorrow's close      claims SOLUSDT +3682.5% annualized
+✅✅✅❌❌   Three-factor combo, tuned in-sample   claims BTCUSDT +51.0%
+✅✅❌❌❌   An honest RSI momentum strategy       claims SOLUSDT +62.2%
 ```
 
-**第一行最能说明问题。** 那个作弊策略，五道闸门里有四道说「没问题」：
+**The first row is the point of the whole project.** For that blatantly cheating
+strategy, **four of the five gates say it's fine**:
 
-- ③ 零假设本底：**显著优于随机（p ≈ 0.012）**
-- ④ 组合层模拟：**账户层面盈利且显著，平均折收益 +71.75%，t = +3.95**
+- ③ Null baseline: **significantly better than random (p ≈ 0.012)**
+- ④ Portfolio: **profitable and significant — +71.75% mean per fold, t = +3.95**
 
-因为**作弊确实能赚钱**。只有 ① 抓到它。
-这就是为什么前瞻必须排在最前面，也是为什么一道闸门不够。
+Because **cheating genuinely does make money.** Only ① catches it.
 
-**第三行最有说服力。** 一个完全合理、毫无作弊的教科书策略，
-①② 之后仍然过不了 ②③④ —— 去掉重叠后毛期望缩水 78%，
-与随机信号区分不开（p ≈ 0.358），账户层面 −24.98%。
+That is why lookahead has to be checked first, and why one gate is never enough.
+
+**The third row is the most sobering.** A completely reasonable, non-cheating
+textbook strategy still fails ②③④: expectancy shrinks 78% once overlap is
+removed, it is indistinguishable from random (p ≈ 0.358), and the account ends
+at −24.98%.
 
 ---
 
-## 差额从哪来：两桩能算出来的罪
+## Where the gap comes from: two computable sins
 
-`truthserum/naive.py` 里老老实实实现了一遍**大多数人自己写的那个回测器**。
-它算出的数字是真的，只是算法是错的。
+`truthserum/naive.py` faithfully implements **the backtester most people write
+themselves**. Its numbers are real; its algorithm is wrong.
 
-| | SOLUSDT，同一段行情、同一段代码 |
+| | SOLUSDT — same data, same strategy code |
 |---|---|
-| 未扣成本 | 总收益 **+64.4%**，年化 **+62.2%** |
-| 已扣成本 | 总收益 **−41.5%**，年化 **−40.6%** |
+| Costs ignored | total **+64.4%**, annualized **+62.2%** |
+| Costs applied | total **−41.5%**, annualized **−40.6%** |
 
-1. **漏掉手续费和滑点** —— 来回 0.1908% × 541 笔 ≈ 累计 **103% 的本金**，
-   而未扣成本的毛利只有 64.4%。这一项就够把它抹平。
-2. **只报表现最好的那个标的** —— 同一策略在 4 个币上跑，
-   BNB 即使不扣成本也是 **−26.5%**。
+1. **Fees and slippage ignored.** 0.1908% round trip × 541 trades ≈ **103% of
+   capital** in cumulative cost, against a gross profit of only 64.4%. That one
+   item alone wipes it out.
+2. **Only the best symbol is reported.** Same strategy across 4 symbols — BNB is
+   **−26.5%** even *before* costs.
 
 ---
 
-## 最核心的设计：每个检测器必须先证明自己没瞎
+## The core design: every detector must first prove it isn't blind
 
-> **一个永远报「一切正常」的检测器，比没有检测器更危险。**
-> 它会让你放心地在错误的结论上继续投入。
+> **A detector that always reports "all clear" is more dangerous than no
+> detector at all.** It lets you keep investing in a wrong conclusion with
+> confidence.
 
-所以 `Audit.report()` 在自检通过之前，**拒绝返回任何结论**：
+So `Audit.report()` **refuses to return any conclusion** until its self-check
+passes:
 
 ```
-⛔  ① 前瞻检测
-    检测器自检未通过 —— 不给出任何结论
-    ├ 它本该抓到人为植入的 bug，但没抓到
-    ├ 在检测器自己被修好之前，它说『干净』是没有意义的。
+⛔  ① Lookahead
+    Self-check failed — no conclusion will be given
+    ├ It should have caught a deliberately injected bug, and did not
+    ├ Until the detector itself is fixed, its "clean" verdict means nothing.
 ```
 
-每道闸门的自检方式：
+How each gate proves itself:
 
-| 闸门 | 自检 |
+| Gate | Self-check |
 |---|---|
-| ⓪ | 人为篡改参照 0.01%，必须检出 |
-| ① | 给策略套一层「偷看未来 1 根」的壳，必须抓到 |
-| ② | 用恒定信号（重叠最大化），去重后笔数必须降到约 1/horizon |
-| ③ | 植入「直接看未来」的策略，它必须显著跑赢自己的本底 |
-| ④ | 抛硬币策略的每笔期望必须 ≈ −成本（可精确验证的不变量） |
+| ⓪ | Tamper with the reference by 0.01% — must be detected |
+| ① | Wrap the strategy in a "peek 1 bar ahead" shell — must be caught |
+| ② | Feed a constant signal (maximum overlap) — dedup must cut trades to ≈ 1/horizon |
+| ③ | Inject a strategy that literally reads the future — it must beat its own baseline |
+| ④ | A coin-flip strategy's expectancy must ≈ −cost (an exactly verifiable invariant) |
 
-**这不是纸上谈兵。写这个项目时，① 号闸门连错三版，每一版都会在真实数据上
-报告「未发现前瞻」，三次都是被自检拦下的：**
+**This is not a design-doc platitude. While building this project, gate ① was
+wrong three times in a row, and every wrong version reported "no lookahead
+found" on real data. All three were stopped by the self-check:**
 
-1. 按【标签时间】截断 —— 但泄露藏在行的【内容】里，按标签截根本删不掉
-2. 把 K 线窗口截在切点 —— 而末尾 12 行会被 dropna 丢掉，泄露正好落在里面
-3. 直接拿返回值索引做 intersection —— 那是行号不是时间戳，整体错位
+1. Truncating by *label* time — but the leak lived in the row's *content*, so
+   truncating by label couldn't remove it
+2. Cutting the kline window at the split point — but the last 12 rows get dropped
+   by `dropna`, and the leak fell exactly inside them
+3. Intersecting the returned index directly — that's a row number, not a
+   timestamp, so everything shifted
 
-报告里每一道闸门都会印出自己的自检证据。
-**「未见异常」这几个字有分量，是因为那道闸门先在人为植入的 bug 上
-证明过自己抓得到。**
+Every gate prints its own self-check evidence in the report.
+**"No anomaly found" carries weight only because that gate first proved, on a
+deliberately injected bug, that it can find one.**
 
 ---
 
-## 为什么会有这个东西
+## Why this exists
 
-2026 年 9 月 1 日，作者的一套自动交易系统在走向前验证里显示：
-**44 折全部盈利，SOL 复合收益 +2286%，平均胜率 68%。**
+On 2026-09-01, the author's automated trading system reported, in walk-forward
+validation: **44 of 44 folds profitable, SOL compounded +2286%, 68% average win
+rate.**
 
-同一天下午查出来：K 线特征和衍生品数据用了两套差 8 小时的时间基准，
-把代码里一条防前瞻的缓冲整个抵消掉了 —— **回测能读到未来 4 小时的数据。**
+That same afternoon: the kline features and the derivatives data were on two
+timestamp bases 8 hours apart, which silently cancelled an anti-lookahead buffer
+in the code — **the backtest could read 4 hours into the future.**
 
-| | 泄露版 | 修复后 |
+| | Leaking | Fixed |
 |---|---|---|
-| 44 折平均 AUC | **0.6765** | **0.5017** |
-| 盈利折 | 44/44 | 5/44 |
-| SOL 复合收益 | +2286% | −20.2% |
+| Mean AUC over 44 folds | **0.6765** | **0.5017** |
+| Profitable folds | 44/44 | 5/44 |
+| SOL compounded | +2286% | −20.2% |
 
-**AUC 0.5017 = 与抛硬币无法区分。** 两个月的调参、集成、成本校准，全部作废。
+**AUC 0.5017 is indistinguishable from a coin flip.** Two months of tuning,
+ensembling and cost calibration — all void.
 
-更糟的是这已经是第二次 —— 半个月前刚抓到过一次 297 小时的前瞻。
-两次都是人手工挖出来的，挖到之后各补一个专项测试，然后等下一次。
+Worse: it was the second time. Two weeks earlier, a 297-hour lookahead had been
+found the same way. Both were dug out by hand, each followed by one more
+targeted test, and then you wait for the next one.
 
-**Truth Serum 就是那个「不用等下一次」的东西。**
-
----
-
-## 数据出处
-
-行情走**币安公开 REST 接口**，落到本地 parquet 缓存后再做审计 ——
-审计不该因为交易所限流或 5xx 半途而废。
-
-**官方 Binance MCP Server 的角色是核验参照，不是取数通道**：⓪ 号闸门拿它
-返回的 K 线逐根比对本地缓存，抓镜像源偏差、现货/合约混用、模拟盘假影线。
-每份报告都印出数据出处（来源、区间、抓取时间），结论可追溯。
-
-当前参照覆盖 **4/4 个标的、共 91 根**，全部逐根一致。
-
-**这是抽样核验，不是全量核验**，报告里会把这句话直说：91 根 / 全量 36000 根
-= 0.25%。抽样一致不等于全量一致。
-
-而且覆盖不全时**不许显示「未见异常」**——只核验了 4 个标的里的 1 个却打勾，
-等于用一个标的的清白替另外三个背书。这种情况判「未检」。
-没有参照样本时同样判「未检」，而不是「检测器不可信」：**没东西可查 ≠ 检测器坏了。**
+**Truth Serum is the thing that means you don't have to wait for the next one.**
 
 ---
 
-## 仓库结构
+## Data provenance
+
+Market data comes from **Binance's public REST endpoints**, cached locally as
+parquet before auditing — an audit shouldn't die halfway because of exchange
+rate limiting or a 5xx.
+
+**The official Binance MCP Server's role is verification, not ingestion.**
+Gate ⓪ compares its klines against the local cache bar by bar, catching mirror
+drift, spot/perp mix-ups, and fake wicks from testnet feeds. Every report prints
+its data provenance (source, range, fetch time), so conclusions are traceable.
+
+Current reference coverage: **4/4 symbols, 91 bars**, all matching exactly.
+
+**This is spot verification, not full verification** — and the report says so
+out loud: 91 bars out of 36,000 = 0.25%. A matching sample does not prove a
+matching whole.
+
+Also, partial coverage **must not display "no anomaly"**: ticking the box after
+checking 1 of 4 symbols would let one symbol's clean record vouch for the other
+three. That case is reported as *not checked*. Same when no reference exists at
+all — **nothing to check ≠ the detector is broken.**
+
+---
+
+## Repository layout
 
 ```
 truthserum/
-├── audit.py          自检框架：Audit 基类 / Verdict / TruthReport
-├── core.py           策略接口 / 成本模型 / 屏障结果 / 走向前折
-├── data.py           公开接口 + MCP 参照，统一 parquet 缓存
-├── indicators.py     策略代码的工具箱（单一出处，全部因果）
-├── nl.py             自然语言 → 策略代码（确定性解析，宁可拒绝不猜）
-├── naive.py          【故意写错的】天真回测器 —— 被拆穿的对象
-├── report_html.py    单文件 HTML 报告，零外部依赖
-├── runner.py         check() 入口
-├── server.py         MCP server（六个工具）
+├── audit.py          Self-check framework: Audit base / Verdict / TruthReport
+├── core.py           Strategy interface / cost model / barrier outcomes / folds
+├── data.py           Public REST + MCP reference, one parquet cache
+├── indicators.py     Toolbox for strategy code (single source, all causal)
+├── nl.py             Plain language → code (deterministic; refuses, never guesses)
+├── naive.py          The DELIBERATELY WRONG backtester — the thing being debunked
+├── report_html.py    Single-file HTML report, zero external dependencies
+├── runner.py         check() entry point
+├── server.py         MCP server (six tools)
 └── audits/
-    ├── provenance.py ⓪ 数据出处核验
-    ├── lookahead.py  ① 前瞻检测
-    ├── overlap.py    ② 重叠计数
-    ├── nulltest.py   ③ 零假设本底
-    └── portfolio.py  ④ 组合层模拟
+    ├── provenance.py ⓪ Data provenance
+    ├── lookahead.py  ① Lookahead
+    ├── overlap.py    ② Overlap counting
+    ├── nulltest.py   ③ Null baseline
+    └── portfolio.py  ④ Portfolio simulation
 examples/
-├── demo.py           四幕演示 ← 从这里开始
-├── make_report.py    生成三份 HTML 报告
-├── smoke.py          合成数据冒烟，不依赖网络
-├── real_binance.py   真实行情上的三个 case（终端版）
-├── provenance_demo.py ⓪ 号闸门：两个 MCP 协同核验
-├── test_nl.py        自然语言层 32 项（10 项是「必须拒绝」）
-└── test_server.py    MCP 工具 + 真实协议握手 31 项
+├── demo.py           The four-act demo ← start here
+├── make_report.py    Generate the three HTML reports
+├── smoke.py          Synthetic-data smoke test, no network
+├── real_binance.py   The three cases on real data (terminal version)
+├── provenance_demo.py Gate ⓪: two MCP servers cross-checking
+├── test_nl.py        Plain-language layer, 32 assertions (10 are "must refuse")
+└── test_server.py    MCP tools + real protocol handshake, 31 assertions
 ```
 
-实测环境：Python 3.11.5 / pandas 3.0.3 / numpy 2.4.4 / pyarrow 24.0.0 / mcp 1.27.1。
+Verified on Python 3.11.5 / pandas 3.0.3 / numpy 2.4.4 / pyarrow 24.0.0 / mcp 1.27.1.
 
-## 自己跑一遍
+## Run it yourself
 
 ```bash
-python examples/smoke.py        # 合成数据，秒级，不联网
-python examples/test_nl.py      # 自然语言层，秒级，不联网
-python examples/demo.py         # 完整四幕（首次会拉行情）
-python examples/make_report.py  # 生成三份 HTML 报告
-python examples/test_server.py  # MCP 工具 + 协议握手
+python examples/smoke.py        # synthetic data, seconds, offline
+python examples/test_nl.py      # plain-language layer, seconds, offline
+python examples/demo.py         # the full four acts (first run fetches data)
+python examples/make_report.py  # generate the three HTML reports
+python examples/test_server.py  # MCP tools + protocol handshake
 ```
 
-## 许可
+## License
 
 MIT
