@@ -115,7 +115,8 @@ class SessionSearch:
             best_score=best.score,
             best_label=f"第 {best.n} 次：{best.label}",
             space=f"本会话在同一配置下累计提交的 {len(att)} 个策略",
-            best_signal=self._groups[key].best_sig)
+            best_signal=self._groups[key].best_sig,
+            n_submitted=len(self.attempts(key)))
 
     def other_groups(self, key: tuple) -> list[tuple]:
         """别的配置下有没有记录 —— 用来防止「查错配置」被误读成「没试过」"""
@@ -147,6 +148,24 @@ class SessionSearch:
             mark = " ← 目前最好" if best and a.n == best.n else ""
             sc = f"{a.score:+.4f}%/笔" if np.isfinite(a.score) else "（无法评分）"
             lines.append(f"  {a.n:>2}. {sc}   {a.label[:52]}   [{a.via}]{mark}")
+        scorable = [a for a in att if np.isfinite(a.score)]
+        if len(scorable) < len(att):
+            lines.append("")
+            lines.append(f"其中 {len(att) - len(scorable)} 次因成交笔数不足无法评分，"
+                         f"实际参与比较的是 {len(scorable)} 次 ——")
+            lines.append("  ⑤ 号闸门按【能参与比较的】次数算，"
+                         "因为 best-of-N 的 N 就该是能竞争的候选数。")
+
+        other = self.other_groups(key)
+        if other:
+            # ⚠ 改一下手续费或屏障参数，配置键就变了，计数从头开始。
+            #   那是一条真实存在的规避路径 —— 不写出来等于留着不说。
+            n_other = sum(len(self._groups[k].attempts) for k in other)
+            lines.append("")
+            lines.append(f"⚠ 本会话在另外 {len(other)} 个配置下还试过 {n_other} 次。")
+            lines.append("  改动标的、周期、屏障或费率都会让计数【从头开始】——"
+                         "这是一条真实存在的规避路径，所以在这里说明。")
+
         if len(att) >= 2:
             lines.append("")
             lines.append("⚠ 试的次数本身就是信息。「我试了 N 个，这个最好」和"

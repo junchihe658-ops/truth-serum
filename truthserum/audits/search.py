@@ -197,6 +197,11 @@ class SearchBiasAudit(Audit):
                   else "（就是当次提交的这个）")
                + f"，本底超过它的比例 p ≈ {p:.3f}",
                "判最好的那个而不是当次那个 —— 因为会拿出去说的永远是最好的数字。"]
+        sub = getattr(log, "n_submitted", 0)
+        if sub and sub != log.n_trials:
+            det.append(f"⚠ 一共提交了 {sub} 次，其中 {sub - log.n_trials} 次"
+                       f"因笔数不足无法评分。判据按【能参与比较的】"
+                       f"{log.n_trials} 次算 —— best-of-N 的 N 就该是能竞争的候选数。")
         if log.space:
             det.append(f"搜索空间：{log.space}")
         det.append("⚠ 本底用的是【独立】随机打乱，而搜索的参数组往往高度相关，"
