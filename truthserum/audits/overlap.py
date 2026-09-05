@@ -72,7 +72,14 @@ class OverlapAudit(Audit):
                 rows.append(r)
         if not rows:
             return None
-        return {k: (sum(r[k] for r in rows) if k.startswith("n")
+        # ⚠ 笔数跨标的【求和】，期望跨标的【取均值】。
+        #   原先判据写的是 k.startswith("n") —— 本意匹配 n_all / n_uni，
+        #   但 net_all / net_uni 也是 n 开头，于是净期望被求和了：
+        #   4 个标的就报成 4 倍。毛期望不受影响（不以 n 开头），所以
+        #   「缩水 %」一直是对的，只有「净」那两个数字是错的。
+        #   这种错法最阴险 —— 数量级还在，方向也对，只是大了几倍。
+        counts = ("n_all", "n_uni")
+        return {k: (sum(r[k] for r in rows) if k in counts
                     else float(np.mean([r[k] for r in rows])))
                 for k in rows[0]}
 
