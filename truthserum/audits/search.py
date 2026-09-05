@@ -104,18 +104,25 @@ class SearchBiasAudit(Audit):
         sym0 = ctx.symbols[0]
         n = len(ctx.bars[sym0])
 
-        # 1) 纯噪声搜 SELF_TRIALS 次挑最好 —— 必须被拦下
-        noise_best, noise_sig = -np.inf, None
+        # 1) 无优势的搜索 SELF_TRIALS 次挑最好 —— 必须被拦下
+        #
+        # ⚠ 候选必须和本底用【同一套生成方式】（都是块打乱）。
+        #   初版这里用的是 SELF_TRIALS 个彼此【独立】的随机信号，而本底是
+        #   同一个信号的块打乱 —— 独立信号之间方差更大，best-of-N 天然更极端，
+        #   两边根本不是一个分布，这个比较从一开始就是歪的。
+        #   4 个标的取均值把方差摊平了、侥幸能过；单标的立刻暴露 p=0.000。
+        #   是自检把它抓出来的。
+        base = {s: rng.choice([-1.0, 0.0, 1.0], size=len(df), p=[0.25, 0.5, 0.25])
+                for s, df in ctx.bars.items()}
+        noise_best = -np.inf
         for _ in range(SELF_TRIALS):
-            cand = {s: rng.choice([-1.0, 0.0, 1.0], size=len(df),
-                                  p=[0.25, 0.5, 0.25])
-                    for s, df in ctx.bars.items()}
+            cand = {s: self._shuffle(rng, z) for s, z in base.items()}
             v = self._score(ctx, cand)
             if np.isfinite(v) and v > noise_best:
-                noise_best, noise_sig = v, cand
-        if noise_sig is None:
+                noise_best = v
+        if not np.isfinite(noise_best):
             raise SelfCheckFailed("噪声搜索没产出任何有效成绩，样本可能不足")
-        null = self._null_best(ctx, noise_sig, SELF_TRIALS, SELF_DRAWS, rng)
+        null = self._null_best(ctx, base, SELF_TRIALS, SELF_DRAWS, rng)
         p_noise = float(np.mean(null >= noise_best))
         if p_noise <= 0.05:
             raise SelfCheckFailed(
@@ -153,13 +160,22 @@ class SearchBiasAudit(Audit):
 
         rng = np.random.default_rng(ctx.seed)
         sig = self._sig_of(ctx, ctx.strategy)
-        real = self._score(ctx, sig)
-        if not np.isfinite(real):
+        now = self._score(ctx, sig)
+        if not np.isfinite(now):
             return AuditResult(
                 name=self.name, verdict=Verdict.SKIPPED,
-                headline="胜出策略的成交笔数不足，无法评估")
+                headline="当前策略的成交笔数不足，无法评估")
 
-        null = self._null_best(ctx, sig, log.n_trials, DRAWS, rng)
+        # ⚠ 判据是【这一轮搜索里最好的那个成绩】，不是当次提交的这个。
+        #   理由很实在：会拿出去说的永远是最好的那个数字。按当次判的话，
+        #   p 值会随着最后一次碰巧好还是碰巧差而乱跳 —— 实测在一个
+        #   6 次的会话里，p 在 0.100 和 0.975 之间来回弹，毫无意义。
+        real = max(now, log.best_score) if np.isfinite(log.best_score) else now
+
+        # 本底必须用【胜出者】的信号构造,不能用当次提交的那个 ——
+        # 不同策略交易结构不同,本底分布跟着变,p 值跨次就没法比了。
+        base = log.best_signal if getattr(log, "best_signal", None) else sig
+        null = self._null_best(ctx, base, log.n_trials, DRAWS, rng)
         p = float(np.mean(null >= real))
 
         det = [f"搜了 {log.n_trials} 组，最好 {log.best_score:+.4f}%/笔"
@@ -168,7 +184,11 @@ class SearchBiasAudit(Audit):
                f"中位 {np.median(null):+.4f}%，"
                f"范围 [{null.min():+.4f}%, {null.max():+.4f}%]，"
                f"{DRAWS} 轮抽样",
-               f"胜出成绩 {real:+.4f}%/笔，本底超过它的比例 p ≈ {p:.3f}"]
+               f"判据用的是【这轮搜索里最好的】{real:+.4f}%/笔"
+               + (f"（当次提交的这个是 {now:+.4f}%）" if abs(now - real) > 1e-9
+                  else "（就是当次提交的这个）")
+               + f"，本底超过它的比例 p ≈ {p:.3f}",
+               "判最好的那个而不是当次那个 —— 因为会拿出去说的永远是最好的数字。"]
         if log.space:
             det.append(f"搜索空间：{log.space}")
         det.append("⚠ 本底用的是【独立】随机打乱，而搜索的参数组往往高度相关，"

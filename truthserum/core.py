@@ -61,6 +61,10 @@ class SearchLog:
     best_score: float
     best_label: str                  # 胜出参数的人话描述
     space: str = ""                  # 搜索空间的描述，写进报告
+    #: 胜出者的信号（{标的: 数组}）。⑤ 号闸门要拿它构造本底 ——
+    #: 用「当次提交的那个」构造本底是错的：不同策略的交易结构不同，
+    #: 本底分布跟着变，p 值跨次不可比。实测会出现「试得越多反而越显著」。
+    best_signal: dict | None = None
 
     @property
     def median(self) -> float:

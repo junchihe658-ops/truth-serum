@@ -39,6 +39,7 @@ from .indicators import TOOLBOX, TOOLBOX_DOC
 from .nl import VOCAB_DOC, CannotParse
 from .nl import parse as parse_nl
 from .runner import AUDITS, check
+from .session import SESSION
 
 mcp = FastMCP("truth-serum")
 
@@ -114,7 +115,7 @@ def fetch_market_data(symbols: list[str], interval: str = "1h",
 
 def _load_probe_check(fn, symbols, interval, claimed,
                       barrier_mult, horizon, fee_per_side,
-                      name: str = "待审策略") -> str:
+                      name: str = "待审策略", via: str = "代码") -> str:
     """加载行情 → 试调 → 跑五道闸门。两条审计入口共用这一份。
 
     抽出来是因为两条入口（手写代码 / 自然语言）必须走【完全相同】的流程。
@@ -142,17 +143,32 @@ def _load_probe_check(fn, symbols, interval, claimed,
                 f"{traceback.format_exc(limit=3)}\n"
                 f"可用的名字：{TOOLBOX_DOC}")
 
+    # ── 把这次尝试记进会话日志 ───────────────────────────────
+    #   真正的 agent 不是我们写的那个 for 循环，是【正在用这个工具的模型】。
+    #   它读懂闸门反馈、自己想下一个策略、再试一次 —— 那就是「我试了很多个，
+    #   这个最好」，正是 ⑤ 号闸门要抓的东西。
+    #   所以每一次审计请求都要记下来，让 ⑤ 号能对着累计次数说话。
+    key = SESSION.key_of(symbols, interval, barrier_mult, horizon, fee_per_side)
+    try:
+        score, sigs = SESSION.score_of(bars, fn, barrier_mult, horizon,
+                                       Costs(fee_per_side=fee_per_side).round_trip)
+    except Exception:
+        score, sigs = float("nan"), None
+    SESSION.record(key, name, score, via, sig=sigs)
+    search_log = SESSION.as_search_log(key)
+
     buf = io.StringIO()
     try:
         with redirect_stdout(buf):          # 别让策略里的 print 污染 MCP 协议
             rep = check(bars, FuncStrategy(name, fn),
                         name=name, claimed=claimed,
                         costs=Costs(fee_per_side=fee_per_side),
-                        barrier_mult=barrier_mult, horizon=horizon)
+                        barrier_mult=barrier_mult, horizon=horizon,
+                        search_log=search_log)
     except Exception:
         return f"审计过程出错：\n{traceback.format_exc(limit=5)}"
 
-    out = [describe(prov), "", rep.render()]
+    out = [describe(prov), "", SESSION.render(key), "", rep.render()]
     noise = buf.getvalue().strip()
     if noise:
         out += ["", "（策略代码的输出）", noise[:2000]]
@@ -200,7 +216,7 @@ def audit_strategy(signal_code: str, symbols: list[str],
         return "策略代码里没有找到 `def signal(bars):`"
 
     return _load_probe_check(fn, symbols, interval, claimed,
-                             barrier_mult, horizon, fee_per_side)
+                             barrier_mult, horizon, fee_per_side, via="代码")
 
 
 @mcp.tool()
@@ -302,8 +318,48 @@ def audit_plain_language(description: str, symbols: list[str],
     out = _load_probe_check(spec.to_strategy(), symbols, interval, claimed,
                             spec.barrier_mult if spec.barrier_mult else 1.5,
                             spec.horizon if spec.horizon else 12,
-                            fee_per_side, name=description.strip()[:40])
+                            fee_per_side, name=description.strip()[:40],
+                            via="自然语言")
     return "\n".join(echo + ["", "=" * 58, "", out])
+
+
+@mcp.tool()
+def search_history(symbols: list[str], interval: str = "1h",
+                   barrier_mult: float = 1.5, horizon: int = 12,
+                   fee_per_side: float = 0.0005) -> str:
+    """看看这个会话在某个配置下已经试过多少个策略、哪个最好。
+
+    ⚠ 为什么这个工具存在：
+
+    如果你（作为 agent）在反复尝试 —— 提一个策略、看哪道闸门没过、
+    改一个再提 —— 那你正在做的事情叫【搜索】。搜索的结果里，有多少是
+    策略真的好、有多少只是「试得够多」，这两件事你自己分不出来。
+
+    ⑤ 号闸门就是拿这个次数在算。所以在你打算把某个成绩报出去之前，
+    先看一眼你到底试了多少次。
+
+    参数要和你审计时用的完全一致 —— 不同配置的成绩不可比，分开计数。
+    """
+    key = SESSION.key_of(symbols, interval, barrier_mult, horizon, fee_per_side)
+    return SESSION.render(key)
+
+
+@mcp.tool()
+def reset_search_history() -> str:
+    """清空本会话的搜索记录。
+
+    ⚠ 什么时候该用：换了一个完全不同的课题，之前的尝试不该再计入。
+
+    ⚠ 什么时候【不该】用：你试了很多次、成绩不好看，想让 ⑤ 号闸门
+      别再提这件事。清空之后选择偏差就从视野里消失了 —— 而它并没有消失，
+      只是你看不见了。这个工具存在的意义就是不让这种事发生。
+
+    这条警告写在这里，是因为「能清空」本身就是一个可以用来自欺的接口。
+    """
+    n = SESSION.reset()
+    return (f"已清空 {n} 条搜索记录。\n\n"
+            f"提醒一句：清空不会让已经发生的搜索消失，只会让 ⑤ 号闸门看不见它。"
+            f"如果你是因为「数字不好看」才清的，那正是这个工具想拦住的事。")
 
 
 def main():

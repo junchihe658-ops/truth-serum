@@ -110,7 +110,36 @@ ck("印了策略自称的成绩", "+180%" in r)
 
 print()
 print("=" * 74)
-print("【3】走真实 MCP 协议：它能不能被别的客户端装上")
+print("【3】会话级搜索日志 —— 真正的 agent 是【正在用它的那个模型】")
+print("=" * 74)
+
+from truthserum.session import SESSION
+SESSION.reset()
+K = SESSION.key_of(["ETHUSDT"], "1h", 1.5, 12, 0.0005)
+ck("清空后没有记录", "还没有审计记录" in S.search_history(["ETHUSDT"]))
+
+r1 = S.audit_plain_language("RSI 超过 60 做多、低于 40 做空", ["ETHUSDT"],
+                            confirmed=True)
+ck("第一次审计后记了一笔", "已经试过 1 个策略" in r1)
+ck("只试过一次时 ⑤ 号判「未检」", "没有搜索日志" in r1)
+
+r2 = S.audit_plain_language("RSI 超过 65 做多、低于 35 做空", ["ETHUSDT"],
+                            confirmed=True)
+ck("第二次累计到 2 笔", "已经试过 2 个策略" in r2)
+ck("攒够两次后 ⑤ 号开始算", "随机搜 2 次" in r2 or "扣掉搜索次数" in r2,
+   "⑤ 号应当给出 p 值而不是跳过")
+
+h = S.search_history(["ETHUSDT"])
+ck("search_history 列得出两次尝试", "1." in h and "2." in h)
+ck("并说明次数本身就是信息", "试的次数本身就是信息" in h)
+
+msg = S.reset_search_history()
+ck("清空会警告这是一种自欺途径", "看不见" in msg or "拦住" in msg)
+ck("清空之后确实空了", "还没有审计记录" in S.search_history(["ETHUSDT"]))
+
+print()
+print("=" * 74)
+print("【4】走真实 MCP 协议：它能不能被别的客户端装上")
 print("=" * 74)
 
 
@@ -132,7 +161,8 @@ try:
     print(f"  服务器暴露的工具: {names}")
     for t in ("list_gates", "fetch_market_data", "audit_strategy",
               "save_mcp_reference", "strategy_vocabulary",
-              "audit_plain_language"):
+              "audit_plain_language", "search_history",
+              "reset_search_history"):
         ck(f"暴露了 {t}", t in names)
 except Exception as e:
     ck("MCP 协议握手", False, f"{type(e).__name__}: {e}")
