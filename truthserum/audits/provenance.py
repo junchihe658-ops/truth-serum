@@ -37,6 +37,7 @@ import numpy as np
 import pandas as pd
 
 from ..audit import Audit, AuditResult, SelfCheckFailed, Verdict
+from ..data import CACHE_DIR
 
 #: 相对容差。交易所返回的是定点小数，同一根 K 线应当【完全相等】；
 #: 留 1e-9 只是为了吸收 float 往返误差，不是为了容忍真实差异。
@@ -87,8 +88,13 @@ class ProvenanceAudit(Audit):
     name = "⓪ 数据出处核验（K 线本身是不是真的）"
     catches = "喂进回测的行情与交易所官方数据不一致：镜像源偏差、现货/合约混用、模拟盘假影线"
 
-    def __init__(self, cache_dir="./.cache", interval="1h"):
-        self.cache_dir = Path(cache_dir)
+    def __init__(self, cache_dir=None, interval="1h"):
+        # ⚠ 默认必须跟着 data.CACHE_DIR 走，不能写死 "./.cache"。
+        #   原先写死的后果：save_mcp_reference 按 data.CACHE_DIR 存参照
+        #   （认 TRUTHSERUM_CACHE 环境变量），这里却去 ./.cache 读 ——
+        #   存和读是两个地方，参照永远找不到，闸门只会安静地报「未检」。
+        #   一个专门抓「安静地骗过你」的工具，不能自己留这种路径。
+        self.cache_dir = Path(cache_dir) if cache_dir else CACHE_DIR
         self.interval = interval
 
     def _pairs(self, ctx):
