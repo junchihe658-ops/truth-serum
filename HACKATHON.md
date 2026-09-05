@@ -90,12 +90,16 @@
 ## 环境
 
 ```
-python  C:\Users\何俊驰\AppData\Local\Programs\Python\Python311\python.exe
-项目    C:\Users\何俊驰\truthserum
+python  Python 3.11（Windows 用户目录下的 Programs\Python\Python311）
+项目    本仓库根目录；已 pip install -e . 进入 sys.path
 git     已配置 origin，凭据已缓存，可直接 push
-MCP     binance-mcp-server，user 作用域，状态 Connected
+MCP     binance-mcp-server + truth-serum，均为 user 作用域
 缓存    ./.cache/*.parquet（已 gitignore）
 ```
+
+> 这里**故意不写绝对路径**。上一版直接贴了 `C:\Users\<真实姓名>\...`，
+> 而这个文件是公开仓库的一部分 —— 等于把作者姓名推到了 GitHub 上。
+> 录屏、贴日志、写文档时都要过一遍这个念头。
 
 ⚠ **MCP 工具只在会话启动时加载。** 授权发生在当前会话之后，
 所以要用币安 MCP 拉数据必须新开会话。
