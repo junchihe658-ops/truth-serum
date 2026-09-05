@@ -76,7 +76,14 @@ class Context:
     costs: Costs = field(default_factory=Costs)
     barrier_mult: float = 1.5          # 止盈止损各 mult × ATR
     horizon: int = 12                  # 时间屏障：多少根 K 线
-    top_quantile: float = 0.10         # 只做信号最强的前 q
+    # ⚠ 这里【故意】没有 top_quantile。
+    #   曾经有一个 `top_quantile: float = 0.10  # 只做信号最强的前 q`，
+    #   但全库搜下来它从没过滤过任何信号 —— 注释声称在干活，实际是死参数。
+    #   任何人读 Context 都会以为审的是「最强的 10% 信号」，其实是全量。
+    #   在一个讲「不要自欺」的项目里，代码里的一句假话比缺个功能严重得多。
+    #   要么实现，要么删掉；留着最危险。删了。
+    #   （真要按信号强度筛，得先让 Strategy 协议能表达强度 —— 它现在只允许
+    #     -1/0/+1，强度根本无从表达。那是另一件事，不是加个参数能解决的。）
     max_positions: int = 4
     pos_pct: float = 0.15              # 单笔名义 = 权益 × pos_pct × leverage
     leverage: int = 3

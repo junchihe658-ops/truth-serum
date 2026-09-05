@@ -100,7 +100,7 @@ class NullTestAudit(Audit):
 
         sub = type(ctx)(bars={sym: bars}, strategy=_Oracle(), costs=ctx.costs,
                         barrier_mult=ctx.barrier_mult, horizon=ctx.horizon,
-                        top_quantile=ctx.top_quantile, seed=ctx.seed)
+                        seed=ctx.seed)
         real, nf, nb = self._real_and_null(_Oracle(), sub, draws=5)
         if real.size == 0 or not np.isfinite(np.nanmean(nb)):
             raise SelfCheckFailed("样本不足")

@@ -93,7 +93,14 @@ ul.det li{margin:5px 0}
 .nums b{font-weight:400;color:var(--dim)}
 .catches{font-size:12.5px;color:var(--skip);margin-top:10px;font-style:italic}
 
-footer{margin-top:44px;padding-top:20px;border-top:1px solid var(--line);
+/* 结构性免责 —— 这个工具是证伪器不是认证器，
+   报告不能把「通过」印得和「未通过」一样重。 */
+.disclaimer{margin:34px 0 0;padding:16px 20px;border-radius:10px;
+  background:rgba(210,153,34,.08);border:1px solid rgba(210,153,34,.35);
+  color:var(--ink);font-size:13.5px;line-height:1.75}
+.disclaimer b{color:var(--warn)}
+
+footer{margin-top:28px;padding-top:20px;border-top:1px solid var(--line);
   color:var(--skip);font-size:12.5px;line-height:1.8}
 footer code{background:var(--card);padding:2px 6px;border-radius:4px}
 footer b{color:var(--dim)}
@@ -224,11 +231,21 @@ def render_html(rep: TruthReport, *, data_note: str = "") -> str:
   <div class="verdict {cls}">{_esc(headline)}</div>
   <div class="strip">{strip}</div>
   {''.join(gates)}
+  <div class="disclaimer">
+    <b>这是证伪器，不是认证器。</b><br>
+    「挂了三道」是<b>强</b>信号 —— 它抓到了具体的、可复现的失败机制。<br>
+    「五道全过」是<b>弱</b>信号 —— 那只意味着<b>这五种已知死法没被检出</b>，
+    不等于这个策略能赚钱。<br>
+    没被检出的死法还有很多：资金费、连续性缺口、跨所成本差异、
+    以及任何我们还没想到的自欺方式。
+  </div>
   <footer>
     {src}
     每一道闸门在给结论之前，都必须先在<b>人为植入的 bug</b> 上证明自己抓得到；
     自检不过就返回「不可判定」，而不是「一切正常」。<br>
     一个永远报平安的检测器，比没有检测器更危险。<br><br>
+    <b>自检是必要不充分的</b>：它只证明了这道闸门抓得住<b>那一种</b>人为 bug，
+    不代表抓得住同类的其它变体。<br><br>
     装成 MCP：<code>claude mcp add truth-serum -- python -m truthserum.server</code>
   </footer>
 </div></body></html>"""
