@@ -75,7 +75,7 @@ class SearchBiasAudit(Audit):
         rng.shuffle(blocks)
         return np.concatenate(blocks)[:n]
 
-    def _null_best(self, ctx, base_sig, n_trials, draws, rng, pool=None):
+    def _null_best(self, ctx, base_sig, n_trials, draws, rng):
         """随机搜 n_trials 次取最好，重复 draws 轮 → 本底分布。
 
         ⚠ 这里【不能】走「先采样一个池子、再有放回重抽」的捷径。
@@ -103,9 +103,14 @@ class SearchBiasAudit(Audit):
 
     # ── 自检 ────────────────────────────────────────────────
     def _self_check(self, ctx) -> str:
+        # ⚠ 没有搜索日志时,_run 只会返回「未检」——
+        #   再花几秒证明这道闸门有判别力，是纯粹的浪费。
+        #   实测:自检 3.50s，正式跑 0.00s，占整次审计的 26%。
+        #   ⓪ 号早就是这么处理的（没参照就不做自检），这里跟上。
+        if not getattr(ctx, "search_log", None):
+            return "无搜索日志，本闸门未执行（自检不适用）"
+
         rng = np.random.default_rng(ctx.seed)
-        sym0 = ctx.symbols[0]
-        n = len(ctx.bars[sym0])
 
         # 1) 无优势的搜索 SELF_TRIALS 次挑最好 —— 必须被拦下
         #

@@ -38,7 +38,7 @@ from .data import describe, load
 from .indicators import TOOLBOX, TOOLBOX_DOC
 from .nl import VOCAB_DOC, CannotParse
 from .nl import parse as parse_nl
-from .runner import AUDITS, check
+from .runner import check
 from .session import SESSION
 
 mcp = FastMCP("truth-serum")

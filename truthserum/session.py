@@ -117,10 +117,29 @@ class SessionSearch:
             space=f"本会话在同一配置下累计提交的 {len(att)} 个策略",
             best_signal=self._groups[key].best_sig)
 
+    def other_groups(self, key: tuple) -> list[tuple]:
+        """别的配置下有没有记录 —— 用来防止「查错配置」被误读成「没试过」"""
+        return [k for k in self._groups if k != key and self._groups[k].attempts]
+
     def render(self, key: tuple) -> str:
         att = self.attempts(key)
         if not att:
-            return "本会话在这个配置下还没有审计记录。"
+            # ⚠ 「这个配置下没有记录」和「你什么都没试过」是两回事。
+            #   只说前一句,一个 agent 很容易读成后一句,以为选择偏差不存在 ——
+            #   而它可能只是把标的写少了一个。这正是本项目最该防的那类误导。
+            other = self.other_groups(key)
+            if not other:
+                return "本会话还没有任何审计记录。"
+            lines = ["本会话在【这个配置】下还没有审计记录。",
+                     "",
+                     "⚠ 但别的配置下有 —— 不要读成「什么都没试过」："]
+            for k in other:
+                syms, iv, bm, hz, _fee = k
+                lines.append(f"  · {'、'.join(syms)} {iv} 屏障{bm} 持{hz}根："
+                             f"{len(self._groups[k].attempts)} 次")
+            lines.append("")
+            lines.append("查询参数必须和审计时完全一致，否则查到的是另一组。")
+            return "\n".join(lines)
         best = max((a for a in att if np.isfinite(a.score)),
                    key=lambda a: a.score, default=None)
         lines = [f"本会话在这个配置下已经试过 {len(att)} 个策略："]

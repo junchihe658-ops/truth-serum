@@ -116,7 +116,7 @@ print("=" * 74)
 from truthserum.session import SESSION
 SESSION.reset()
 K = SESSION.key_of(["ETHUSDT"], "1h", 1.5, 12, 0.0005)
-ck("清空后没有记录", "还没有审计记录" in S.search_history(["ETHUSDT"]))
+ck("清空后没有记录", "还没有任何审计记录" in S.search_history(["ETHUSDT"]))
 
 r1 = S.audit_plain_language("RSI 超过 60 做多、低于 40 做空", ["ETHUSDT"],
                             confirmed=True)
@@ -133,9 +133,14 @@ h = S.search_history(["ETHUSDT"])
 ck("search_history 列得出两次尝试", "1." in h and "2." in h)
 ck("并说明次数本身就是信息", "试的次数本身就是信息" in h)
 
+# 查错配置不能被读成「什么都没试过」—— 这正是本项目最该防的那类误导
+h2 = S.search_history(["BTCUSDT"])          # 审的是 ETHUSDT，这里故意查错
+ck("查错配置时明确区分「没记录」和「没试过」", "不要读成" in h2, h2[:60])
+ck("并列出别的配置下的记录", "ETHUSDT" in h2)
+
 msg = S.reset_search_history()
 ck("清空会警告这是一种自欺途径", "看不见" in msg or "拦住" in msg)
-ck("清空之后确实空了", "还没有审计记录" in S.search_history(["ETHUSDT"]))
+ck("清空之后确实空了", "还没有任何审计记录" in S.search_history(["ETHUSDT"]))
 
 print()
 print("=" * 74)
