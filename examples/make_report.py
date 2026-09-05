@@ -75,4 +75,6 @@ for slug, name, fn, prefix in CASES:
     marks = "".join({"clean": "✅", "failed": "❌", "unusable": "⛔",
                      "skipped": "⏭"}[r.verdict.value] for r in rep.results)
     print(f"  {marks}  {name:<24} → {p}")
-print("\n闸门顺序：⓪ 数据出处  ① 前瞻  ② 重叠  ③ 本底  ④ 组合层")
+print("\n闸门顺序：⓪ 数据出处  ① 前瞻  ② 重叠  ③ 本底  ④ 组合层  ⑤ 搜索偏差")
+print("⑤ 显示「未检」是对的：这三个策略不是搜出来的，没有搜索日志可查 ——")
+print("「没查」和「没问题」必须区分开。")
