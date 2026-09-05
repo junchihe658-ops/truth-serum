@@ -131,7 +131,10 @@ print("""
   一个永远报平安的检测器，比没有检测器更危险。
 """)
 
-out = save_html(rep, "reports/demo.html",
-                data_note=describe(prov).replace("\n", " | "))
+# ⚠ 多行必须保留。把 describe() 的多行用 " | " 压成一行之后，渲染层按行数
+#   数标的，4 个标的会被读成 1 个 —— 报头印「1 个标的 · BTCUSDT」，
+#   而送检声明印的是 SOLUSDT 的成绩。一个专门抓「数字对不上」的工具，
+#   自己出了张对不上的报告。
+out = save_html(rep, "reports/demo.html", data_note=describe(prov))
 print(f"  HTML 报告 → {out}")
 print("━" * W)
