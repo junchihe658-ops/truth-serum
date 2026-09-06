@@ -206,17 +206,40 @@ def _match_expr(s: str, pos: int, interval: str) -> tuple[Expr, int] | None:
         return Expr(f"bb_pct(c, {n})", f"布林位置({n})", f"v_bb{n}",
                     f"v_bb{n} = bb_pct(c, {n})"), pos + m.end()
 
-    # N 小时涨幅 / N 根涨跌幅
+    # N 小时涨幅 / N 根涨跌幅 / N 小时跌幅
+    #
+    # ⚠ 「跌幅」必须取反，不能和「涨幅」当成同一个量。
+    #   初版把 涨幅/跌幅/涨跌幅 一律映射成 pct_change，于是
+    #   「24小时跌幅超过 3% 做空」被解析成「涨跌幅 > 3% → 做空」——
+    #   那是【上涨】3%，方向整个反了，而且不报错，静默地做了错误解释。
+    #   一个宁可拒绝也不猜的解析器，绝不能有这种静默误读。
     m = re.match(r"(\d+)\s*(根|条|个|分钟|分|小时|时|天|日)?\s*"
-                 r"(?:涨幅|跌幅|涨跌幅|收益率|变动)", rest)
+                 r"(涨幅|跌幅|涨跌幅|收益率|变动)", rest)
     if m:
-        n, unit = int(m.group(1)), m.group(2)
+        n, unit, word = int(m.group(1)), m.group(2), m.group(3)
         bars, note = _to_bars(n, unit or "根", interval)
-        return Expr(f"c.pct_change({bars})", f"{n}{unit or '根'}涨跌幅",
+        u = unit or "根"
+        if word == "跌幅":
+            return Expr(f"(-c.pct_change({bars}))", f"{n}{u}跌幅",
+                        f"v_drop{bars}", f"v_drop{bars} = -c.pct_change({bars})",
+                        is_pct=True,
+                        note=(note if unit not in (None, "根", "条", "个") else "")
+                        ), pos + m.end()
+        return Expr(f"c.pct_change({bars})", f"{n}{u}涨跌幅",
                     f"v_ret{bars}", f"v_ret{bars} = c.pct_change({bars})",
                     is_pct=True,
                     note=(note if unit not in (None, "根", "条", "个") else "")
                     ), pos + m.end()
+
+    # 没写时间跨度的「涨幅 / 跌幅」—— 报错要说到点子上。
+    # 原先只会说「开头这个量不在词汇表里」，可它明明在词汇表里，
+    # 缺的只是跨度。这种报错等于把人往错方向指。
+    m = re.match(r"(涨幅|跌幅|涨跌幅|收益率|变动)", rest)
+    if m:
+        raise CannotParse(
+            m.group(1), f"「{m.group(1)}」前面要写时间跨度，不然不知道是多久的",
+            f"例如「24小时{m.group(1)}」「12根{m.group(1)}」。"
+            f"上一条写了跨度也不会自动带过来 —— 跨度不一样，说的就是两件事。")
 
     m = re.match(r"收盘价|收盘|价格|close", rest)
     if m:
@@ -535,6 +558,8 @@ VOCAB_DOC = """Truth Serum 自然语言策略 —— 词汇表
   收盘价 / 价格 / close
   成交量 / volume
   24小时涨幅 / 12根涨跌幅          过去 N 根的涨跌幅（百分比量，右边要写 %）
+  24小时跌幅                      同上但取反 ——「跌幅超过 3%」= 跌了超过 3%
+                                  ⚠ 时间跨度必须每条都写，上一条的不会带过来
 
 比较词
   超过 / 大于 / 高于 / >          这一根就满足即可

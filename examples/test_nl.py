@@ -68,6 +68,9 @@ refuses("百分比量给了裸数字不敢猜", "24小时涨幅超过 3 做多",
 refuses("非百分比量写了 % 也不敢猜", "RSI 超过 70% 做空", "%")
 refuses("比较词缺失", "RSI 70 做空", "比较词")
 refuses("空输入", "   ")
+refuses("涨跌幅没写时间跨度", "跌幅超过 3% 做空", "时间跨度")
+refuses("上一条的跨度不会自动带过来", "24小时涨幅超过 3% 做多、跌幅超过 3% 做空",
+        "时间跨度")
 refuses("换算下来不足一根", "涨幅超过 3% 做多，持 1 分钟", interval="1h",
         must_mention="0 根")
 
@@ -97,6 +100,18 @@ ck("「持仓 20 根」认得出（曾经因正则顺序整条失配）", s3.hor
 
 sw = parse("RSI 超过 ７０ 做空")          # 全角数字
 ck("全角数字能归一", len(sw.rules) == 1 and "70" in sw.explain())
+
+# 「跌幅」必须取反 —— 曾经它和「涨幅」映射到同一个量，于是
+# 「跌幅超过 3% 做空」被静默解析成「上涨 3% 做空」，方向整个反了
+sd = parse("24小时涨幅超过 3% 做多、24小时跌幅超过 3% 做空")
+ck("跌幅与涨幅是两个不同的量",
+   sd.rules[0].conds[0].lhs.label != sd.rules[1].conds[0].lhs.label,
+   f"{sd.rules[0].conds[0].lhs.label} vs {sd.rules[1].conds[0].lhs.label}")
+ck("跌幅在代码里是取反的", "-c.pct_change" in sd.to_code(), )
+fd = sd.to_strategy()(BARS).to_numpy()
+fu = parse("24小时涨幅超过 3% 做多").to_strategy()(BARS).to_numpy()
+ck("跌幅规则真的产生了做空信号", (fd < 0).sum() > 0, f"做空 {(fd<0).sum()} 根")
+ck("涨幅与跌幅的信号不相同", not np.array_equal(fd, fu))
 
 sm = parse("24小时涨幅超过 3% 并且 收盘价高于 MA20 做多")
 ck("一条规则两个条件", len(sm.rules[0].conds) == 2)
