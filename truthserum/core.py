@@ -70,6 +70,10 @@ class SearchLog:
     #: 但两个数不一样时必须都说出来,否则报告里「试过 10 个」和
     #: 「随机搜 2 次」会对不上,读的人只会以为哪儿算错了。
     n_submitted: int = 0
+    #: 每个候选的信号（int8 省内存）。⑤ 号要拿它们估【有效独立试验数】——
+    #: 名义上试了 27 组，但 RSI 阈值差 3 的两组信号几乎一样，
+    #: 实际独立的远没有 27 个。直接拿 27 去算 best-of-N 会系统性高估选择偏差。
+    signals: list[dict] | None = None
 
     @property
     def median(self) -> float:

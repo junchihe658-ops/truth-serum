@@ -27,11 +27,21 @@
 同一套生成方式（块打乱）。原因见 `_self_check` 里的注释 —— 两边生成方式
 不一致的话，比较从一开始就是歪的，单标的上会直接暴露成 p=0.000。
 
-## 已知偏差，写在这里不藏着
+## 相关性偏差：修掉了，不是写在文档里承认了
 
-本底用的是 N 次【独立】随机打乱，而真实搜索的 N 组参数往往【高度相关】
-（RSI 阈值差 5 的两组信号几乎一样）。有效独立试验数远小于 N，
-所以本底偏严、这道闸门偏向于报警。搜索空间越是相关，越要保守解读它的结论。
+本底是 N 次【独立】随机打乱，而真实搜索的 N 组参数往往【高度相关】
+（RSI 阈值差 5 的两组信号几乎一样）。直接拿名义 N 去算 best-of-N，
+本底会被抬得过高，这道闸门就系统性偏向报警。
+
+一开始我只是把这条写进文档，当作已知局限。那是不够的 ——
+它让结论稳定地错向一边，不是「使用时留意即可」的那种局限。
+
+现在 `effective_trials()` 从候选信号的相关结构估【有效独立试验数】
+（相关矩阵特征值的参与比），用它代替名义次数。
+全部独立时它等于 N，全部雷同时它等于 1。
+
+代价说清楚：这会让 ⑤ 号更难报警。但那是对的 ——
+如果 agent 实际上只做了 4 次独立尝试，选择偏差本来就小。
 """
 from __future__ import annotations
 
@@ -96,6 +106,52 @@ class SearchBiasAudit(Audit):
                     best = v
             out.append(best)
         return np.asarray(out)
+
+    @staticmethod
+    def effective_trials(signals: list[dict]) -> float:
+        """从候选信号的相关结构估【有效独立试验数】。
+
+        ## 为什么必须估
+
+        名义上搜了 27 组，但 RSI 阈值差 3 的两组信号几乎一模一样。
+        拿 27 去算「随机搜 27 次的最好成绩」，本底会被抬得过高 ——
+        这道闸门就系统性地偏向报警。这不是可以「写在文档里」了事的偏差，
+        它会让结论错向一边。
+
+        ## 怎么估
+
+        把每个候选的信号拉成一个向量，算相关矩阵的特征值，
+        取参与比（participation ratio）：
+
+            N_eff = (Σλ)² / Σλ²
+
+        全部彼此独立时 N_eff = N；全部完全相同时 N_eff = 1。
+        这是多重检验里估「有效独立检验数」的标准做法。
+
+        ## 已知近似
+
+        用的是【信号】的相关，而真正该看的是【成绩】的相关。
+        信号相关高 → 成绩相关高，方向是对的，但不是严格等价。
+        写在这儿，不藏。
+        """
+        if not signals or len(signals) < 2:
+            return float(len(signals or []))
+        syms = sorted(signals[0])
+        X = np.vstack([np.concatenate([np.asarray(sig[s], dtype=float)
+                                       for s in syms]) for sig in signals])
+        # 常数行（比如全 0 的信号）算不出相关，先剔掉
+        keep = X.std(axis=1) > 1e-12
+        X = X[keep]
+        if len(X) < 2:
+            return float(max(len(signals), 1))
+        C = np.corrcoef(X)
+        C = np.nan_to_num(C, nan=0.0)
+        lam = np.linalg.eigvalsh(C)
+        lam = np.clip(lam, 0, None)
+        if lam.sum() <= 0:
+            return float(len(X))
+        neff = float(lam.sum() ** 2 / (lam ** 2).sum())
+        return float(np.clip(neff, 1.0, len(X)))
 
     def _sig_of(self, ctx, strategy):
         return {s: np.asarray(strategy.signal(df), dtype=float).reshape(-1)
@@ -183,12 +239,19 @@ class SearchBiasAudit(Audit):
         # 本底必须用【胜出者】的信号构造,不能用当次提交的那个 ——
         # 不同策略交易结构不同,本底分布跟着变,p 值跨次就没法比了。
         base = log.best_signal if getattr(log, "best_signal", None) else sig
-        null = self._null_best(ctx, base, log.n_trials, DRAWS, rng)
+        # ⚠ 用【有效独立试验数】而不是名义次数。
+        #   名义 27 组里，RSI 阈值差 3 的两组信号几乎一样 —— 直接拿 27 去算
+        #   best-of-N，本底会被抬得过高，这道闸门就系统性偏向报警。
+        #   这不是能靠「写进文档」了事的偏差：它让结论稳定地错向一边。
+        sigs = getattr(log, "signals", None)
+        n_eff = self.effective_trials(sigs) if sigs else float(log.n_trials)
+        n_use = max(2, int(round(n_eff)))
+        null = self._null_best(ctx, base, n_use, DRAWS, rng)
         p = float(np.mean(null >= real))
 
         det = [f"搜了 {log.n_trials} 组，最好 {log.best_score:+.4f}%/笔"
                f"（{log.best_label}），中位 {log.median:+.4f}%",
-               f"随机搜同样 {log.n_trials} 次的最好成绩："
+               f"随机搜 {n_use} 次的最好成绩："
                f"中位 {np.median(null):+.4f}%，"
                f"范围 [{null.min():+.4f}%, {null.max():+.4f}%]，"
                f"{DRAWS} 轮抽样",
@@ -197,6 +260,12 @@ class SearchBiasAudit(Audit):
                   else "（就是当次提交的这个）")
                + f"，本底超过它的比例 p ≈ {p:.3f}",
                "判最好的那个而不是当次那个 —— 因为会拿出去说的永远是最好的数字。"]
+        if sigs:
+            det.append(f"名义上试了 {log.n_trials} 组，但这些参数彼此高度相关 —— "
+                       f"按信号的相关结构估算，【有效独立试验数】只有 {n_eff:.1f} 组，"
+                       f"所以本底按 {n_use} 次算，不是 {log.n_trials} 次。")
+            det.append("  拿名义次数去算，会把本底抬得过高、让这道闸门系统性偏向报警。"
+                       "那是真偏差，不能只写在文档里就算数。")
         sub = getattr(log, "n_submitted", 0)
         if sub and sub != log.n_trials:
             det.append(f"⚠ 一共提交了 {sub} 次，其中 {sub - log.n_trials} 次"
@@ -204,15 +273,20 @@ class SearchBiasAudit(Audit):
                        f"{log.n_trials} 次算 —— best-of-N 的 N 就该是能竞争的候选数。")
         if log.space:
             det.append(f"搜索空间：{log.space}")
-        det.append("⚠ 本底用的是【独立】随机打乱，而搜索的参数组往往高度相关，"
-                   "有效独立试验数小于名义次数 —— 这道闸门偏向于报警。")
-        nums = {"n_trials": log.n_trials, "best": real,
+        if not sigs:
+            # 没有候选信号就估不出 N_eff，只能退回名义次数 —— 那会偏向报警。
+            # 有信号时这条不该再出现：偏差已经修掉了，不是「留着提醒」。
+            det.append("⚠ 这次没拿到候选信号，只能按名义次数算。搜索的参数组"
+                       "往往高度相关，这么算会偏向报警 —— 让 agent 交出全部"
+                       "候选信号就能修正。")
+        nums = {"n_trials": log.n_trials, "n_effective": round(n_eff, 2),
+                "best": real,
                 "null_median": float(np.median(null)), "p": p}
 
         if p > 0.05:
             return AuditResult(
                 name=self.name, verdict=Verdict.FAILED,
-                headline=f"这个成绩可以用「搜得多」解释：随机搜 {log.n_trials} 次"
+                headline=f"这个成绩可以用「搜得多」解释：随机搜 {n_use} 次"
                          f"也能做到（p ≈ {p:.3f}）",
                 detail=det + ["把搜索次数算进去之后，胜出的那组并不比"
                               "「随机试同样多次里最好的那次」更好。"],

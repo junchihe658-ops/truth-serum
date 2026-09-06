@@ -324,10 +324,15 @@ Specific weaknesses, stated rather than hidden:
   `(−3×cost, +0.5×cost)`. A cost model wrong by 3× would still pass.
 - **③'s self-check uses fewer shuffles than the real run** (5 vs 80). Enough for
   the huge effect of an oracle strategy, weaker than the real test.
-- **⑤'s null uses independent draws**, while a real search's parameter sets are
-  highly correlated (RSI thresholds 5 apart produce nearly identical signals).
-  The effective number of independent trials is smaller than the nominal count,
-  so ⑤ leans toward flagging.
+- **⑤'s correlation bias is fixed, not listed.** It used to compute best-of-N
+  from the nominal trial count, while a real search's parameter sets are highly
+  correlated — which systematically overstates selection bias.
+  `effective_trials()` now estimates the **effective number of independent
+  trials** from the correlation structure of the candidate signals. Measured: 27
+  same-family threshold variants come to 1.8 effective trials.
+  **The cost is that ⑤ flags much less often** — but if you genuinely made only
+  two independent attempts, the selection bias really is small. The remaining
+  approximation: signal correlation stands in for score correlation.
 - **No funding fee.** `Costs` covers fees and slippage only. A 12-hour perp
   position crosses one or two 8-hour funding settlements.
 - **The cost model was measured on OKX; the data is from Binance.** Fees match

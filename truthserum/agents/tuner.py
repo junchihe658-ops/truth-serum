@@ -147,6 +147,7 @@ class TunerAgent:
         periods = [7, 14, 21]
         pi, spread = 1, 0            # 当前用哪个周期、阈值拉开多少
         all_scores, best, best_c, trail = [], -np.inf, None, []
+        all_sigs = []          # 供 ⑤ 号估有效独立试验数
 
         for rd in range(1, rounds + 1):
             his = [60 + spread + k for k in (0, 3, 6)]
@@ -169,6 +170,9 @@ class TunerAgent:
                         vals.append(v)
                 sc = float(np.mean(vals)) if vals else float("nan")
                 all_scores.append(sc)
+                if np.isfinite(sc):
+                    all_sigs.append({s2: np.asarray(fn(df2), dtype=np.int8).reshape(-1)
+                                     for s2, df2 in bars.items()})
                 if np.isfinite(sc) and sc > r_best:
                     r_best, r_c = sc, c
             if r_c is None:
@@ -212,7 +216,8 @@ class TunerAgent:
         log = SearchLog(
             n_trials=len(all_scores), scores=all_scores,
             best_score=best, best_label=best_c.label,
-            space=f"{rounds} 轮反馈式搜索，累计 {len(all_scores)} 组")
+            space=f"{rounds} 轮反馈式搜索，累计 {len(all_scores)} 组",
+            signals=all_sigs or None)
         self.last_log, self.trail = log, trail
 
         if self.verbose:

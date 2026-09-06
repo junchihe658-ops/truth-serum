@@ -54,6 +54,10 @@ class _Group:
     #: 用当次提交的那个会让 p 值跨次不可比。
     best_sig: dict | None = None
     best_score: float = float("-inf")
+    #: 每次尝试的信号，int8 存（-1/0/1 三个值，float64 是八倍浪费）。
+    #: ⑤ 号要拿它们估有效独立试验数 —— 一个会话里连着改阈值提交的几个策略，
+    #: 名义上是几次独立尝试，实际信号可能几乎一样。
+    sigs: list = field(default_factory=list)
 
 
 class SessionSearch:
@@ -91,6 +95,13 @@ class SessionSearch:
         g = self._groups.setdefault(key, _Group(key))
         a = Attempt(n=len(g.attempts) + 1, label=label, score=score, via=via)
         g.attempts.append(a)
+        if sig is not None and np.isfinite(score):
+            # 只留能评分的那些 —— 评不了分的没参与「挑最好」，不该进相关矩阵。
+            # 上限 200：会话再长也不至于把内存吃掉，而 200 组之后
+            # N_eff 的估计早就稳定了。
+            if len(g.sigs) < 200:
+                g.sigs.append({k: np.asarray(v, dtype=np.int8)
+                               for k, v in sig.items()})
         if sig is not None and np.isfinite(score) and score > g.best_score:
             g.best_score, g.best_sig = score, sig
         return a
@@ -116,7 +127,8 @@ class SessionSearch:
             best_label=f"第 {best.n} 次：{best.label}",
             space=f"本会话在同一配置下累计提交的 {len(att)} 个策略",
             best_signal=self._groups[key].best_sig,
-            n_submitted=len(self.attempts(key)))
+            n_submitted=len(self.attempts(key)),
+            signals=list(self._groups[key].sigs) or None)
 
     def other_groups(self, key: tuple) -> list[tuple]:
         """别的配置下有没有记录 —— 用来防止「查错配置」被误读成「没试过」"""
