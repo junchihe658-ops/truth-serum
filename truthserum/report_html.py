@@ -219,6 +219,10 @@ def render_html(rep: TruthReport, *, data_note: str = "") -> str:
         src = (f'<b>受检数据逐项出处</b><div class="srcwrap">'
                f'<table>{body}</table></div>')
 
+    # 闸门数不能写死 —— 从五道加到六道那次，底部那句「五道全过」没跟着改，
+    # 于是页面上同时印着六个图标和「五道全过」，自相矛盾。改成从结果里数。
+    n_gates = len(rep.results)
+
     return f"""<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -233,8 +237,8 @@ def render_html(rep: TruthReport, *, data_note: str = "") -> str:
   {''.join(gates)}
   <div class="disclaimer">
     <b>这是证伪器，不是认证器。</b><br>
-    「挂了三道」是<b>强</b>信号 —— 它抓到了具体的、可复现的失败机制。<br>
-    「五道全过」是<b>弱</b>信号 —— 那只意味着<b>这五种已知死法没被检出</b>，
+    「挂了闸门」是<b>强</b>信号 —— 它抓到了具体的、可复现的失败机制。<br>
+    「{n_gates} 道全过」是<b>弱</b>信号 —— 那只意味着<b>这 {n_gates} 种已知死法没被检出</b>，
     不等于这个策略能赚钱。<br>
     没被检出的死法还有很多：资金费、连续性缺口、跨所成本差异、
     以及任何我们还没想到的自欺方式。
