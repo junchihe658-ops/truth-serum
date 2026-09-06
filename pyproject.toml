@@ -15,7 +15,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "truth-serum"
 version = "0.2.0"
-description = "一个不肯对你撒谎的回测审计器：五道闸门，每道都先证明自己抓得到已知 bug"
+description = "一个不肯对你撒谎的回测审计器：六道闸门，每道都先证明自己抓得到已知 bug"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -35,4 +35,9 @@ truth-serum = "truthserum.server:main"
 Repository = "https://github.com/junchihe658-ops/truth-serum"
 
 [tool.setuptools]
-packages = ["truthserum", "truthserum.audits"]
+# ⚠ 三个包都要列全。漏了 truthserum.agents 的后果：`pip install -e .`
+# 照样能跑（editable 把仓库根目录挂进 sys.path，子包顺带就找到了），
+# 但别人用非 editable 的 `pip install .` 装完，examples/agent_demo.py 第 28 行
+# `from truthserum.agents import TunerAgent` 直接 ImportError —— 而这正是
+# 别人复现 agent 的入口。本机 editable 装着，所以这个洞在本地永远看不见。
+packages = ["truthserum", "truthserum.audits", "truthserum.agents"]
