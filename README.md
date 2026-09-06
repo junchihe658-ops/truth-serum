@@ -351,27 +351,17 @@ opportunity 7.4 times over.
 
 ## Why this exists
 
-On 2026-09-01, the author's automated trading system reported, in walk-forward
-validation: **44 of 44 folds profitable, SOL compounded +2286%, 68% average win
-rate.**
+Look-ahead leaks don't announce themselves. Two data sources on timestamp bases
+a few hours apart, a centred rolling window, a stray `bfill` — any one of them
+can quietly let a backtest read the future. What you see is not an error
+message; it is a beautiful equity curve.
 
-That same afternoon: the kline features and the derivatives data were on two
-timestamp bases 8 hours apart, which silently cancelled an anti-lookahead buffer
-in the code — **the backtest could read 4 hours into the future.**
+Finding one by hand takes days. Finding one does not stop the next one: you
+patch it, add a test for that exact case, and wait.
 
-| | Leaking | Fixed |
-|---|---|---|
-| Mean AUC over 44 folds | **0.6765** | **0.5017** |
-| Profitable folds | 44/44 | 5/44 |
-| SOL compounded | +2286% | −20.2% |
-
-**AUC 0.5017 is indistinguishable from a coin flip.** Two months of work — void.
-
-Worse: it was the second time. Two weeks earlier, a 297-hour lookahead had been
-found the same way. Both were dug out by hand, each followed by one more
-targeted test, and then you wait for the next one.
-
-**Truth Serum is the thing that means you don't have to wait for the next one.**
+Truth Serum turns each known failure mode into a gate that runs every time —
+and each gate proves it can catch a planted bug before it is allowed to report
+a verdict.
 
 ---
 
