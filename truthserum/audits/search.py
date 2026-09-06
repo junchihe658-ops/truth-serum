@@ -260,12 +260,23 @@ class SearchBiasAudit(Audit):
                   else "（就是当次提交的这个）")
                + f"，本底超过它的比例 p ≈ {p:.3f}",
                "判最好的那个而不是当次那个 —— 因为会拿出去说的永远是最好的数字。"]
-        if sigs:
-            det.append(f"名义上试了 {log.n_trials} 组，但这些参数彼此高度相关 —— "
+        if sigs and n_use < log.n_trials:
+            # 折扣真的发生了才这么说。以前不分情况都印这一句，于是
+            # N_eff 取整后等于名义次数时会印出「按 3 次算，不是 3 次」——
+            # 自相矛盾，而且「彼此高度相关」在那种情况下是假话。
+            det.append(f"名义上试了 {log.n_trials} 组，但这些候选彼此相关 —— "
                        f"按信号的相关结构估算，【有效独立试验数】只有 {n_eff:.1f} 组，"
                        f"所以本底按 {n_use} 次算，不是 {log.n_trials} 次。")
             det.append("  拿名义次数去算，会把本底抬得过高、让这道闸门系统性偏向报警。"
                        "那是真偏差，不能只写在文档里就算数。")
+        elif sigs:
+            # 折扣为零同样是信息：说明这几个候选真的是几次不同的尝试，
+            # 一次都没打折。把它说出来，比含糊带过更能说明折扣不是摆设。
+            det.append(f"名义上试了 {log.n_trials} 组，按信号的相关结构估出的"
+                       f"【有效独立试验数】是 {n_eff:.1f} 组，取整后仍按 "
+                       f"{n_use} 次算 —— 本次没有打折。")
+            det.append("  候选越像，折得越多；折扣为零说明这几个策略"
+                       "彼此确实够不一样，每一个都算一次独立尝试。")
         sub = getattr(log, "n_submitted", 0)
         if sub and sub != log.n_trials:
             det.append(f"⚠ 一共提交了 {sub} 次，其中 {sub - log.n_trials} 次"
